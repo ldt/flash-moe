@@ -379,18 +379,18 @@ def load_expert_index(model_path):
             # Try model_path argument as fallback
             filepath = Path(model_path) / filename
         fd = os.open(str(filepath), os.O_RDONLY)
-        # Bypass kernel buffer cache on macOS (we manage our own LRU cache)
-        try:
-            fcntl.fcntl(fd, fcntl.F_NOCACHE, 1)
-        except (OSError, AttributeError):
-            pass  # F_NOCACHE not available on this platform
+        # NOTE: Do NOT use F_NOCACHE. The kernel page cache provides a valuable
+        # second-level cache. With F_NOCACHE, every read hits SSD at ~1.8 GB/s.
+        # With page cache, recently-read experts are served at ~40 GB/s (memcpy).
+        # Our LRU cache handles the application-level caching; the page cache
+        # handles the OS-level caching of recently-accessed pages.
         fds[filename] = fd
 
     # Store globally for atexit cleanup
     _pread_fds.update(fds)
 
     print(f"[pread] Loaded expert index: {len(expert_index.get('expert_reads', {}))} layers, "
-          f"{len(fds)} shard files opened with F_NOCACHE")
+          f"{len(fds)} shard files opened (page cache enabled)")
 
     return expert_index, fds
 
@@ -513,21 +513,25 @@ def pread_expert_batch(expert_index, fds, layer, expert_indices):
     # Phase 2: Sort by (fd, offset) for sequential access
     read_ops.sort(key=lambda x: (x[0], x[1]))
 
-    # Phase 3: Execute all reads
+    # Phase 3: Execute reads with threading for parallel I/O
     batch_results = {idx: {} for idx in expert_indices}
-    io_bytes = 0
-    io_seeks = 0
-    io_time = 0.0
-    array_time = 0.0
+    io_bytes = sum(op[2] for op in read_ops)
+    io_seeks = len(read_ops)
 
-    for fd, offset, size, expert_idx, proj_name, attr_name, dtype_str, shape in read_ops:
-        t_io = time.time()
+    def _do_read(op):
+        fd, offset, size, expert_idx, proj_name, attr_name, dtype_str, shape = op
         raw = os.pread(fd, size, offset)
-        io_time += time.time() - t_io
-        io_bytes += size
-        io_seeks += 1
+        return (expert_idx, proj_name, attr_name, dtype_str, shape, raw)
 
-        t_arr = time.time()
+    t_io = time.time()
+    # Use ThreadPoolExecutor with 8 workers to saturate NVMe
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        raw_results = list(pool.map(_do_read, read_ops))
+    io_time = time.time() - t_io
+
+    t_arr = time.time()
+    for expert_idx, proj_name, attr_name, dtype_str, shape, raw in raw_results:
         np_dtype, _ = _PREAD_NP_DTYPE[dtype_str]
         np_arr = np.frombuffer(raw, dtype=np_dtype).reshape(shape)
 
@@ -536,7 +540,7 @@ def pread_expert_batch(expert_index, fds, layer, expert_indices):
             batch_results[expert_idx][(proj_name, attr_name)] = mx.array(np_f32).astype(mx.bfloat16)
         else:
             batch_results[expert_idx][(proj_name, attr_name)] = mx.array(np_arr)
-        array_time += time.time() - t_arr
+    array_time = time.time() - t_arr
 
     batch_io_stats = {
         "bytes_read": io_bytes,
