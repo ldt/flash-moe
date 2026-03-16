@@ -326,6 +326,12 @@ class ExpertCache:
             return False
         return len(self.cache[key]) >= 9  # gate/up/down x weight/scales/biases
 
+    def touch(self, layer_idx, expert_id):
+        """Move entry to end (most recently used) to prevent eviction."""
+        key = (layer_idx, expert_id)
+        if key in self.cache:
+            self.cache.move_to_end(key)
+
     def record_hit(self):
         self.hits += 1
 
@@ -699,6 +705,94 @@ def clear_expert_weights(model, layer_num):
     mx.clear_cache()  # Return freed Metal memory to OS
 
 
+def compute_moe_direct(x, indices, expert_tensors, group_size=64, bits=4, mode="affine"):
+    """Compute MoE SwitchGLU forward pass directly via mx.gather_qmm.
+
+    Bypasses model weight mutation entirely -- no load_weights, no clear_expert_weights.
+    Replicates the SwitchGLU.__call__ + QuantizedSwitchLinear.__call__ logic.
+
+    Args:
+        x: hidden states [batch, seq_len, hidden_dim]
+        indices: remapped expert indices [batch, seq_len, top_k] with values in 0..num_unique-1
+        expert_tensors: dict with keys like "gate_proj.weight", "gate_proj.scales", etc.
+            Each value is [num_unique_experts, ...] stacked tensor.
+        group_size: quantization group size (default 64)
+        bits: quantization bits (default 4)
+        mode: quantization mode (default "affine")
+
+    Returns:
+        output: [batch, seq_len, top_k, hidden_dim]
+    """
+    # Replicate SwitchGLU.__call__: expand dims for gather_qmm batch indexing
+    x = mx.expand_dims(x, (-2, -3))
+
+    # For single-token inference (indices.size < 64), no sorting needed
+    do_sort = indices.size >= 64
+    idx = indices
+    inv_order = None
+    if do_sort:
+        # Replicate _gather_sort
+        *_, M = indices.shape
+        flat_indices = indices.flatten()
+        order = mx.argsort(flat_indices)
+        inv_order = mx.argsort(order)
+        x = x.flatten(0, -3)[order // M]
+        idx = flat_indices[order]
+
+    # up_proj: x -> intermediate
+    x_up = mx.gather_qmm(
+        x,
+        expert_tensors["up_proj.weight"],
+        expert_tensors["up_proj.scales"],
+        expert_tensors.get("up_proj.biases"),
+        rhs_indices=idx,
+        transpose=True,
+        group_size=group_size,
+        bits=bits,
+        mode=mode,
+        sorted_indices=do_sort,
+    )
+
+    # gate_proj: x -> intermediate
+    x_gate = mx.gather_qmm(
+        x,
+        expert_tensors["gate_proj.weight"],
+        expert_tensors["gate_proj.scales"],
+        expert_tensors.get("gate_proj.biases"),
+        rhs_indices=idx,
+        transpose=True,
+        group_size=group_size,
+        bits=bits,
+        mode=mode,
+        sorted_indices=do_sort,
+    )
+
+    # SwiGLU activation: silu(gate) * up
+    x_act = nn.silu(x_gate) * x_up
+
+    # down_proj: intermediate -> hidden
+    out = mx.gather_qmm(
+        x_act,
+        expert_tensors["down_proj.weight"],
+        expert_tensors["down_proj.scales"],
+        expert_tensors.get("down_proj.biases"),
+        rhs_indices=idx,
+        transpose=True,
+        group_size=group_size,
+        bits=bits,
+        mode=mode,
+        sorted_indices=do_sort,
+    )
+
+    # Unsort if we sorted
+    if do_sort:
+        # Replicate _scatter_unsort
+        out = out[inv_order]
+        out = mx.unflatten(out, 0, indices.shape)
+
+    return out.squeeze(-2)
+
+
 def generate_offload(model, tokenizer, prompt, max_tokens, weight_index, model_path, lazy_eval=False):
     """Generate tokens with explicit per-layer weight streaming for models larger than DRAM.
 
@@ -974,6 +1068,7 @@ def generate_offload_selective(model, tokenizer, prompt, max_tokens, weight_inde
                 all_nonexpert_weights.append((san_name, tensors[name]))
         print(f"    read {len(names)} tensors from {Path(filepath).name} ({get_mem_gb():.1f}GB)", flush=True)
 
+    print(f"    Total non-expert weights to load: {len(all_nonexpert_weights)}")
     lm.load_weights(all_nonexpert_weights, strict=False)
     # Skip mx.eval — direct I/O arrays are already real Metal allocations (not mmap-backed).
     # BF16 astype results will be lazily evaluated during first forward pass (cheap).
@@ -989,6 +1084,18 @@ def generate_offload_selective(model, tokenizer, prompt, max_tokens, weight_inde
     # 1536 entries = 48 layers × 8 experts × 4 tokens worth. ~7.6GB max.
     # Better tok/s per GB of memory than 3072 entries.
     expert_cache = ExpertCache(max_entries=1536)
+
+    # === Cache quantization parameters from model config (read once) ===
+    # These are needed by compute_moe_direct for mx.gather_qmm calls.
+    with open(model_path / "config.json") as f:
+        _cfg = json.load(f)
+    _qcfg = _cfg.get("quantization", _cfg.get("quantization_config", {}))
+    qparams = {
+        "group_size": _qcfg.get("group_size", 64),
+        "bits": _qcfg.get("bits", 4),
+        "mode": _qcfg.get("mode", "affine"),
+    }
+    del _cfg, _qcfg
 
     # === I/O instrumentation counters (per-token, reset each token) ===
     io_stats_history = []  # list of per-token dicts
@@ -1012,7 +1119,6 @@ def generate_offload_selective(model, tokenizer, prompt, max_tokens, weight_inde
         ssm_mask = create_ssm_mask(h, cache[text_model.ssm_idx])
 
         layer_timings = []
-        layers_with_experts = []  # Track which layers had expert weights loaded
 
         # --- Per-layer: selective load, compute (clearing deferred to end of token) ---
         for i in range(num_layers):
@@ -1070,12 +1176,14 @@ def generate_offload_selective(model, tokenizer, prompt, max_tokens, weight_inde
             for idx in unique_list:
                 if expert_cache.has_expert(i, idx):
                     expert_cache.record_hit()
+                    # Touch the entry so it won't be evicted during put_attr
+                    # for uncached experts below
+                    expert_cache.touch(i, idx)
                 else:
                     expert_cache.record_miss()
                     uncached_list.append(idx)
 
             # Read only uncached experts from disk (threaded: one expert per thread)
-            switch = layer.mlp.switch_mlp
             if uncached_list:
                 # Pre-populate header_cache for all expert files (thread-safe after this)
                 for filepath in set(expert_file_map.values()):
@@ -1101,26 +1209,34 @@ def generate_offload_selective(model, tokenizer, prompt, max_tokens, weight_inde
                         for (proj_name, attr_name), arr in attrs.items():
                             expert_cache.put_attr(i, eidx, proj_name, attr_name, arr)
 
-            # Assemble [num_unique, ...] weight tensors from cache
+            # Assemble [num_unique, ...] weight tensors into a dict for direct computation
+            expert_tensors = {}
             for proj_name in ["gate_proj", "up_proj", "down_proj"]:
-                proj = getattr(switch, proj_name)
                 for attr_name in ["weight", "scales", "biases"]:
                     slices = []
                     for idx in unique_list:
                         arr = expert_cache.get_attr(i, idx, proj_name, attr_name)
                         if arr is not None:
                             slices.append(arr)
+                        else:
+                            raise RuntimeError(
+                                f"Expert cache miss: layer={i} expert={idx} "
+                                f"{proj_name}.{attr_name} not found after loading"
+                            )
                     if slices:
-                        proj[attr_name] = mx.stack(slices, axis=0)
+                        expert_tensors[f"{proj_name}.{attr_name}"] = mx.stack(slices, axis=0)
 
-            # Force-eval the assembled expert weights
-            mx.eval(switch.gate_proj.parameters(),
-                    switch.up_proj.parameters(),
-                    switch.down_proj.parameters())
+            # Force-eval the assembled expert weight tensors
+            mx.eval(*expert_tensors.values())
 
-            # Run expert MoE computation with remapped indices
+            # Run expert MoE computation directly via mx.gather_qmm (no model weight mutation)
             t_moe = time.time()
-            y = switch(h_post, remapped_inds)
+            y = compute_moe_direct(
+                h_post, remapped_inds, expert_tensors,
+                group_size=qparams["group_size"],
+                bits=qparams["bits"],
+                mode=qparams["mode"],
+            )
             y = (y * scores[..., None]).sum(axis=-2)
 
             # Run shared expert (already loaded in phase 1)
@@ -1132,41 +1248,30 @@ def generate_offload_selective(model, tokenizer, prompt, max_tokens, weight_inde
             mx.eval(h)
             token_moe_compute_time += time.time() - t_moe
 
-            expert_time = time.time() - t_expert
+            # Delete stacked expert tensors (they're copies from cache, not needed after compute).
+            # The actual mx.clear_cache() is done once per token after all layers complete.
+            del expert_tensors
 
-            # Track this layer for batched clearing at end of token
-            if hasattr(layer.mlp, 'switch_mlp'):
-                layers_with_experts.append(i)
+            expert_time = time.time() - t_expert
 
             layer_timings.append({
                 "layer": i,
                 "is_linear": layer.is_linear,
                 "attn_router_ms": attn_router_time * 1000,
                 "expert_ms": expert_time * 1000,
-                "clear_ms": 0.0,  # measured at token level now
+                "clear_ms": 0.0,
                 "load_ms": expert_time * 1000,  # total I/O for compat (only experts now)
                 "compute_ms": attn_router_time * 1000,  # compute portion for compat
             })
 
         all_layer_timings.append(layer_timings)
 
-        # ====== Batched Phase 4: Clear all expert weights at once ======
+        # Free Metal memory from stacked expert tensor copies accumulated across 48 layers.
+        # Direct MoE doesn't mutate model weights (no dummy-weight clearing needed), but
+        # the Metal allocator still holds dead stacked-tensor memory (~40MB/layer x 48 = ~1.9GB).
+        # Without clear_cache(), memory pressure triggers OS paging that slows file I/O.
         t_clear = time.time()
-        if layers_with_experts:
-            # Collect all dummy weights for all layers in one list
-            all_dummy_weights = []
-            for layer_i in layers_with_experts:
-                layer_obj = layers[layer_i]
-                switch = layer_obj.mlp.switch_mlp
-                for proj_name in ["gate_proj", "up_proj", "down_proj"]:
-                    proj = getattr(switch, proj_name)
-                    for attr_name in ["weight", "scales", "biases"]:
-                        if hasattr(proj, attr_name):
-                            full_name = f"model.layers.{layer_i}.mlp.switch_mlp.{proj_name}.{attr_name}"
-                            all_dummy_weights.append((full_name, mx.zeros((1,), dtype=getattr(proj, attr_name).dtype)))
-            if all_dummy_weights:
-                lm.load_weights(all_dummy_weights, strict=False)
-            mx.clear_cache()
+        mx.clear_cache()
         batch_clear_time = time.time() - t_clear
 
         # --- Norm + LM head (already pinned) ---
