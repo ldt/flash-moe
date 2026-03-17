@@ -110,7 +110,8 @@
 #define DOWN_B_OFF_2  3801088
 
 // KV cache maximum context length
-#define MAX_SEQ_LEN 32768  // 32K context — only 15 full-attn layers need KV cache (~480MB)
+#define MAX_SEQ_LEN 131072   // 128K context — CPU KV caches grow via realloc if needed
+#define GPU_KV_SEQ  8192     // GPU KV buffer pre-allocation (grows if exceeded, falls back to CPU attn)
 
 // EOS token
 #define EOS_TOKEN_1         248046
@@ -927,7 +928,7 @@ static MetalCtx *metal_setup(void) {
     // GPU attention buffers
     {
         size_t kv_dim = NUM_KV_HEADS * HEAD_DIM;  // 512
-        size_t kv_cache_size = MAX_SEQ_LEN * kv_dim * sizeof(float);
+        size_t kv_cache_size = GPU_KV_SEQ * kv_dim * sizeof(float);
         for (int i = 0; i < NUM_FULL_ATTN_LAYERS; i++) {
             ctx->buf_kv_k[i] = [ctx->device newBufferWithLength:kv_cache_size
                                                         options:MTLResourceStorageModeShared];
@@ -936,7 +937,7 @@ static MetalCtx *metal_setup(void) {
         }
         ctx->buf_attn_q      = [ctx->device newBufferWithLength:NUM_ATTN_HEADS * HEAD_DIM * sizeof(float)
                                                         options:MTLResourceStorageModeShared];
-        ctx->buf_attn_scores = [ctx->device newBufferWithLength:(size_t)NUM_ATTN_HEADS * MAX_SEQ_LEN * sizeof(float)
+        ctx->buf_attn_scores = [ctx->device newBufferWithLength:(size_t)NUM_ATTN_HEADS * GPU_KV_SEQ * sizeof(float)
                                                         options:MTLResourceStorageModeShared];
         ctx->buf_attn_out    = [ctx->device newBufferWithLength:NUM_ATTN_HEADS * HEAD_DIM * sizeof(float)
                                                         options:MTLResourceStorageModeShared];
@@ -3933,7 +3934,7 @@ static void fused_layer_forward(
         // Only enabled when seq_len >= 32 (below that, CPU is faster).
         int gpu_attn_ready = (g_metal && g_metal->attn_scores_pipe &&
                               fa_idx >= 0 && fa_idx < NUM_FULL_ATTN_LAYERS &&
-                              kv->len >= 32);
+                              kv->len >= 32 && kv->len < GPU_KV_SEQ);
 
         if (gpu_attn_ready) {
             // Copy Q and gate to GPU; attention dispatches will be in CMD2
@@ -4174,7 +4175,7 @@ static void fused_layer_forward(
     // Only enabled when seq_len >= 32 — below that, CPU attention is faster
     // because GPU command encoder overhead dominates at short sequences.
     int gpu_attn_fuse = (is_full && !attn_out_for_oproj && g_metal && g_metal->attn_scores_pipe
-                         && kv && kv->len >= 32);
+                         && kv && kv->len >= 32 && kv->len < GPU_KV_SEQ);
 
     if ((attn_out_for_oproj || gpu_attn_fuse) && oproj_w && oproj_s && oproj_b &&
         g_metal && g_metal->wf_buf && have_moe_weights &&
@@ -4217,7 +4218,7 @@ static void fused_layer_forward(
             uint32_t hd = HEAD_DIM;
             uint32_t kvd = (uint32_t)kv_dim;
             uint32_t sl = (uint32_t)kv->len;
-            uint32_t seq_stride = MAX_SEQ_LEN;
+            uint32_t seq_stride = GPU_KV_SEQ;
             uint32_t hpkv = (uint32_t)heads_per_kv;
 
             // Enc A1: attn_scores_batched

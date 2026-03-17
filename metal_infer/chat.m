@@ -22,7 +22,7 @@
 #define NEWLINE_TOKEN   198     // \n
 
 // Maximum conversation length in tokens
-#define MAX_CONV_TOKENS 32768  // matches MAX_SEQ_LEN — only ~480MB for 15 full-attn KV caches
+#define MAX_CONV_TOKENS 131072  // 128K context — matches MAX_SEQ_LEN, ~1.9GB KV cache at max
 // Maximum input line length
 #define MAX_INPUT_LINE  4096
 // Maximum tokens per response
@@ -33,10 +33,16 @@
 // ============================================================================
 
 typedef struct {
-    uint32_t tokens[MAX_CONV_TOKENS];
-    int count;       // total tokens in conversation so far
-    int processed;   // tokens already fed through the model
+    uint32_t *tokens;  // heap-allocated [MAX_CONV_TOKENS]
+    int count;         // total tokens in conversation so far
+    int processed;     // tokens already fed through the model
 } ConversationState;
+
+static void conv_init(ConversationState *conv) {
+    conv->tokens = calloc(MAX_CONV_TOKENS, sizeof(uint32_t));
+    conv->count = 0;
+    conv->processed = 0;
+}
 
 static void conv_reset(ConversationState *conv) {
     conv->count = 0;
@@ -307,7 +313,7 @@ int main(int argc, char **argv) {
 
         // ---- Conversation state ----
         ConversationState conv;
-        conv_reset(&conv);
+        conv_init(&conv);
         int pos = 0;  // RoPE position counter
 
         reset_delta_net_state();
@@ -364,11 +370,12 @@ int main(int argc, char **argv) {
             }
 
             // ---- Encode user message to tokens ----
-            uint32_t msg_tokens[MAX_CONV_TOKENS];
+            uint32_t *msg_tokens = malloc(MAX_CONV_TOKENS * sizeof(uint32_t));
             int is_first = (conv.count == 0);
             int n_msg = encode_user_message(input_line, msg_tokens, MAX_CONV_TOKENS - conv.count, is_first);
             if (n_msg < 0) {
                 fprintf(stderr, "[error] Failed to tokenize input. Is encode_prompt.py available?\n\n");
+                free(msg_tokens);
                 continue;
             }
 
@@ -376,11 +383,13 @@ int main(int argc, char **argv) {
             if (conv.count + n_msg + MAX_RESPONSE_TOKENS > MAX_CONV_TOKENS) {
                 fprintf(stderr, "[error] Context full (%d tokens). Use /clear to reset.\n\n",
                         conv.count + n_msg);
+                free(msg_tokens);
                 continue;
             }
 
             // Append user tokens to conversation
             conv_append_tokens(&conv, msg_tokens, n_msg);
+            free(msg_tokens);
 
             // ---- Prefill: process all new tokens ----
             double t_prefill = now_ms();
