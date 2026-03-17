@@ -854,3 +854,113 @@ kernel void sigmoid_gate(
     float g = 1.0f / (1.0f + exp(-gate[tid]));
     x_out[tid] = x_out[tid] * g;
 }
+
+
+// ============================================================================
+// Kernel 10: GatedDeltaNet linear attention step (single token, all heads)
+// ============================================================================
+//
+// Implements the GatedDeltaNet recurrence for autoregressive generation:
+//   1. State decay:  S[vi][ki] *= g_decay
+//   2. Memory read:  kv_mem[vi] = sum_ki(S[vi][ki] * k[ki])
+//   3. Delta:        delta[vi] = (v[vi] - kv_mem[vi]) * beta_gate
+//   4. State update: S[vi][ki] += k[ki] * delta[vi]
+//   5. Output:       out[vi] = sum_ki(S[vi][ki] * q[ki])
+//
+// Dispatch: 64 threadgroups (one per v-head), 128 threads each (one per vi).
+// Each thread owns one row S[head_id][vi][:] of the 128x128 state matrix.
+//
+// State layout: [64 * 128 * 128] float = 4MB total, persisted across tokens.
+// k-head sharing: 4 v-heads share 1 k-head (64 v-heads / 16 k-heads).
+
+kernel void gated_delta_net_step(
+    device float *state,             // [64 * 128 * 128] persistent state
+    device const float *q,           // [2048] (16 k-heads * 128)
+    device const float *k,           // [2048] (16 k-heads * 128)
+    device const float *v,           // [8192] (64 v-heads * 128)
+    device const float *g_decay,     // [64] per v-head
+    device const float *beta_gate,   // [64] per v-head
+    device float *output,            // [8192] (64 v-heads * 128)
+    constant uint &k_heads_per_v,    // = 4
+    uint head_id [[threadgroup_position_in_grid]],
+    uint vi [[thread_position_in_threadgroup]]
+) {
+    uint kh = head_id / k_heads_per_v;
+    float g = g_decay[head_id];
+    float beta = beta_gate[head_id];
+
+    uint state_base = head_id * 128 * 128 + vi * 128;
+    uint k_base = kh * 128;
+    uint v_base = head_id * 128;
+
+    // Step 1+2: Decay state row and compute kv_mem = dot(S[vi][:], k[:])
+    float kv_mem = 0.0f;
+    for (uint ki = 0; ki < 128; ki++) {
+        float s = state[state_base + ki] * g;
+        state[state_base + ki] = s;
+        kv_mem += s * k[k_base + ki];
+    }
+
+    // Step 3+4: Delta update — S[vi][ki] += k[ki] * delta
+    float delta = (v[v_base + vi] - kv_mem) * beta;
+    for (uint ki = 0; ki < 128; ki++) {
+        state[state_base + ki] += k[k_base + ki] * delta;
+    }
+
+    // Step 5: Output — out[vi] = dot(S[vi][:], q[:])
+    float out_val = 0.0f;
+    for (uint ki = 0; ki < 128; ki++) {
+        out_val += state[state_base + ki] * q[k_base + ki];
+    }
+    output[v_base + vi] = out_val;
+}
+
+
+// ============================================================================
+// Kernel 11: Conv1d depthwise step (single token, incremental inference)
+// ============================================================================
+//
+// Depthwise 1D convolution for one new input token:
+//   output[c] = sum_k(history[k][c] * weight[c][k]) + input[c] * weight[c][3]
+//   then SiLU activation: output[c] = output[c] / (1 + exp(-output[c]))
+//
+// After computing, shifts the history buffer left and appends the new input.
+//
+// Weight layout: [channels * kernel_size] bf16, weight[c * kernel_size + k]
+// Conv state layout: [(kernel_size-1) * channels] row-major, state[k * channels + c]
+// kernel_size = 4 (hardcoded), so 3 history slots + 1 new input.
+//
+// Dispatch: conv_dim threads (12288), one per channel.
+
+kernel void conv1d_step(
+    device float *conv_state,         // [(kernel_size-1) * conv_dim] = [3 * conv_dim]
+    device const float *input,        // [conv_dim] current input
+    device const uint16_t *weights,   // [conv_dim * 4] bf16 as uint16
+    device float *output,             // [conv_dim] convolution output
+    constant uint &conv_dim,          // = 12288
+    uint idx [[thread_position_in_grid]]
+) {
+    if (idx >= conv_dim) return;
+
+    // Convolution: dot product of history + new input with weights
+    // weight layout: weight[c * 4 + k] for channel c, position k
+    uint w_base = idx * 4;
+    float acc = 0.0f;
+
+    // 3 history slots (k=0,1,2)
+    acc += conv_state[0 * conv_dim + idx] * bf16_to_f32(weights[w_base + 0]);
+    acc += conv_state[1 * conv_dim + idx] * bf16_to_f32(weights[w_base + 1]);
+    acc += conv_state[2 * conv_dim + idx] * bf16_to_f32(weights[w_base + 2]);
+
+    // New input (k=3)
+    float inp = input[idx];
+    acc += inp * bf16_to_f32(weights[w_base + 3]);
+
+    // SiLU activation
+    output[idx] = acc / (1.0f + exp(-acc));
+
+    // Shift history: move slots 1,2 -> 0,1, append input at slot 2
+    conv_state[0 * conv_dim + idx] = conv_state[1 * conv_dim + idx];
+    conv_state[1 * conv_dim + idx] = conv_state[2 * conv_dim + idx];
+    conv_state[2 * conv_dim + idx] = inp;
+}

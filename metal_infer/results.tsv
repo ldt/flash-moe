@@ -1,2 +1,4 @@
 HEAD	Qwen3.5-397B-A17B-4bit	397.0	17.0	3.30	2464	5.5	keep	C/METAL E2E: "the best way to make a cup of tea?" 300ms/tok. GPU attn scores REVERTED (too slow for short ctx)
 HEAD	Qwen3.5-397B-A17B-4bit	397.0	17.0	5.29	0	5.5	keep	C/METAL peak: 189ms/tok, GPU norm+residual+fused dispatch. Quality output.
+HEAD	Qwen3.5-397B-A17B-4bit	397.0	17.0	2.79	0	5.5	keep	C/METAL: BLAS delta-net (0.28ms vs 0.78ms cpu_attn), GCD dispatch, gated timing. 352ms/tok avg.
+HEAD	Qwen3.5-397B-A17B-4bit	397.0	17.0	0.56	0	5.5	discard	mmap expert files: CATASTROPHIC 5x regression. Per-page faults 100x slower than pread for uncached 7MB experts.

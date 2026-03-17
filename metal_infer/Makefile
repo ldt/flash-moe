@@ -16,7 +16,7 @@
 
 CC = clang
 CFLAGS = -O2 -Wall -Wextra -fobjc-arc
-FRAMEWORKS = -framework Metal -framework Foundation
+FRAMEWORKS = -framework Metal -framework Foundation -framework Accelerate
 LDFLAGS = -lpthread
 
 TARGET = metal_infer

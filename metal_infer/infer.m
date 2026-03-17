@@ -53,6 +53,8 @@
 #include <getopt.h>
 #include <pthread.h>
 #include <errno.h>
+#include <dispatch/dispatch.h>
+#include <Accelerate/Accelerate.h>
 
 // ============================================================================
 // Model constants
@@ -133,6 +135,7 @@ typedef struct {
 } LayerTimingAccum;
 
 static LayerTimingAccum g_timing = {0};
+static int g_timing_enabled = 0;
 
 static void timing_reset(void) {
     memset(&g_timing, 0, sizeof(g_timing));
@@ -706,6 +709,22 @@ typedef struct {
     // Shared event for CPU-GPU synchronization (async pipeline)
     id<MTLSharedEvent> pipeline_event;   // CPU signals when buf_input is ready
     uint64_t event_value;                // monotonically increasing event counter
+    // GPU delta-net (gated_delta_net_step) and conv1d pipelines
+    id<MTLComputePipelineState> delta_net_step;  // gated_delta_net_step kernel
+    id<MTLComputePipelineState> conv1d_step;     // conv1d_step kernel
+    // Persistent GPU state buffers for linear attention layers
+    #define NUM_LINEAR_LAYERS 45
+    id<MTLBuffer> buf_delta_state[NUM_LINEAR_LAYERS];   // [64*128*128] float per layer
+    id<MTLBuffer> buf_conv_state[NUM_LINEAR_LAYERS];     // [3*12288] float per layer
+    // Scratch buffers for delta-net inputs/outputs
+    id<MTLBuffer> buf_delta_q;        // [2048] float
+    id<MTLBuffer> buf_delta_k;        // [2048] float
+    id<MTLBuffer> buf_delta_v;        // [8192] float
+    id<MTLBuffer> buf_delta_g_decay;  // [64] float
+    id<MTLBuffer> buf_delta_beta;     // [64] float
+    id<MTLBuffer> buf_delta_output;   // [8192] float
+    id<MTLBuffer> buf_conv_input;     // [12288] float
+    id<MTLBuffer> buf_conv_output;    // [12288] float
 } MetalCtx;
 
 static MetalCtx *g_metal = NULL;
@@ -771,6 +790,10 @@ static MetalCtx *metal_setup(void) {
     ctx->attn_softmax_pipe = makePipe(@"attn_softmax_batched");
     ctx->attn_values_pipe  = makePipe(@"attn_values_batched");
     ctx->sigmoid_gate_pipe = makePipe(@"sigmoid_gate");
+    ctx->delta_net_step = NULL; // makePipe(@"gated_delta_net_step"); // disabled: 195MB state causes GPU memory pressure
+    ctx->conv1d_step    = makePipe(@"conv1d_step");
+    if (!ctx->delta_net_step) fprintf(stderr, "[metal] WARNING: gated_delta_net_step pipeline failed (CPU fallback)\n");
+    if (!ctx->conv1d_step)    fprintf(stderr, "[metal] WARNING: conv1d_step pipeline failed (CPU fallback)\n");
 
     if (!ctx->matvec_v3 || !ctx->matvec_fast) {
         fprintf(stderr, "ERROR: Required Metal pipeline missing\n");
@@ -874,12 +897,48 @@ static MetalCtx *metal_setup(void) {
                (double)(NUM_ATTN_HEADS * MAX_SEQ_LEN * sizeof(float)) / 1e6);
     }
 
+    // Persistent GPU state buffers for delta-net (linear attention layers)
+    if (ctx->delta_net_step) {
+        for (int i = 0; i < NUM_LINEAR_LAYERS; i++) {
+            ctx->buf_delta_state[i] = [ctx->device newBufferWithLength:64*128*128*sizeof(float)
+                                                               options:MTLResourceStorageModeShared];
+            memset([ctx->buf_delta_state[i] contents], 0, 64*128*128*sizeof(float));
+            ctx->buf_conv_state[i] = [ctx->device newBufferWithLength:3*12288*sizeof(float)
+                                                              options:MTLResourceStorageModeShared];
+            memset([ctx->buf_conv_state[i] contents], 0, 3*12288*sizeof(float));
+        }
+        // Scratch buffers for delta-net inputs/outputs (allocated once, reused)
+        ctx->buf_delta_q       = [ctx->device newBufferWithLength:2048*sizeof(float)  options:MTLResourceStorageModeShared];
+        ctx->buf_delta_k       = [ctx->device newBufferWithLength:2048*sizeof(float)  options:MTLResourceStorageModeShared];
+        ctx->buf_delta_v       = [ctx->device newBufferWithLength:8192*sizeof(float)  options:MTLResourceStorageModeShared];
+        ctx->buf_delta_g_decay = [ctx->device newBufferWithLength:64*sizeof(float)    options:MTLResourceStorageModeShared];
+        ctx->buf_delta_beta    = [ctx->device newBufferWithLength:64*sizeof(float)    options:MTLResourceStorageModeShared];
+        ctx->buf_delta_output  = [ctx->device newBufferWithLength:8192*sizeof(float)  options:MTLResourceStorageModeShared];
+        ctx->buf_conv_input    = [ctx->device newBufferWithLength:12288*sizeof(float) options:MTLResourceStorageModeShared];
+        ctx->buf_conv_output   = [ctx->device newBufferWithLength:12288*sizeof(float) options:MTLResourceStorageModeShared];
+        printf("[metal] Delta-net GPU buffers: %d layers (%.1f MB state + %.1f MB scratch)\n",
+               NUM_LINEAR_LAYERS,
+               NUM_LINEAR_LAYERS * (64*128*128*4 + 3*12288*4) / 1e6,
+               (2048+2048+8192+64+64+8192+12288+12288) * 4 / 1e6);
+    }
+
     // Create shared event for CPU-GPU async pipeline
     ctx->pipeline_event = [ctx->device newSharedEvent];
     ctx->event_value = 0;
 
     printf("[metal] Inference pipelines ready (multi-expert[%d] + shared buffers allocated)\n", MAX_K);
     return ctx;
+}
+
+// Reset delta-net and conv GPU state buffers (call at start of new generation)
+static void reset_delta_net_state(void) {
+    if (!g_metal || !g_metal->delta_net_step) return;
+    for (int i = 0; i < NUM_LINEAR_LAYERS; i++) {
+        if (g_metal->buf_delta_state[i])
+            memset([g_metal->buf_delta_state[i] contents], 0, 64*128*128*sizeof(float));
+        if (g_metal->buf_conv_state[i])
+            memset([g_metal->buf_conv_state[i] contents], 0, 3*12288*sizeof(float));
+    }
 }
 
 // Wrap the mmap'd weight file as a Metal buffer (zero-copy on unified memory)
@@ -2574,6 +2633,7 @@ typedef struct {
     off_t offset;
     size_t size;
     ssize_t result;
+    const void *mmap_base;  // if non-NULL, memcpy from mmap instead of pread
 } InferPreadTask;
 
 typedef struct {
@@ -2591,13 +2651,103 @@ static void *infer_pread_thread_fn(void *arg) {
     return NULL;
 }
 
+// ============================================================================
+// Persistent I/O Thread Pool — eliminates pthread_create/join per layer
+// ============================================================================
+
+typedef struct {
+    pthread_t threads[NUM_IO_THREADS];
+    pthread_mutex_t mutex;
+    pthread_cond_t work_ready;
+    pthread_cond_t work_done;
+    InferPreadTask *tasks;
+    int num_tasks;
+    int tasks_completed;
+    int generation;          // incremented each dispatch — workers wait for new gen
+    volatile int shutdown;
+} IOThreadPool;
+
+static IOThreadPool g_io_pool;
+static int g_io_pool_initialized = 0;
+
+static void *io_pool_worker(void *arg) {
+    int tid = (int)(intptr_t)arg;
+    int my_gen = 0;
+    pthread_mutex_lock(&g_io_pool.mutex);
+    while (1) {
+        while (g_io_pool.generation == my_gen && !g_io_pool.shutdown)
+            pthread_cond_wait(&g_io_pool.work_ready, &g_io_pool.mutex);
+        if (g_io_pool.shutdown) break;
+        my_gen = g_io_pool.generation;
+
+        // Snapshot work for this generation
+        int num_tasks = g_io_pool.num_tasks;
+        InferPreadTask *tasks = g_io_pool.tasks;
+        pthread_mutex_unlock(&g_io_pool.mutex);
+
+        // Process assigned tasks (stride by thread count)
+        for (int i = tid; i < num_tasks; i += NUM_IO_THREADS) {
+            InferPreadTask *t = &tasks[i];
+            t->result = pread(t->fd, t->dst, t->size, t->offset);
+        }
+
+        pthread_mutex_lock(&g_io_pool.mutex);
+        g_io_pool.tasks_completed++;
+        if (g_io_pool.tasks_completed == NUM_IO_THREADS)
+            pthread_cond_signal(&g_io_pool.work_done);
+    }
+    pthread_mutex_unlock(&g_io_pool.mutex);
+    return NULL;
+}
+
+static void io_pool_init(void) {
+    if (g_io_pool_initialized) return;
+    pthread_mutex_init(&g_io_pool.mutex, NULL);
+    pthread_cond_init(&g_io_pool.work_ready, NULL);
+    pthread_cond_init(&g_io_pool.work_done, NULL);
+    g_io_pool.shutdown = 0;
+    g_io_pool.generation = 0;
+    g_io_pool.tasks = NULL;
+    for (int i = 0; i < NUM_IO_THREADS; i++)
+        pthread_create(&g_io_pool.threads[i], NULL, io_pool_worker, (void*)(intptr_t)i);
+    g_io_pool_initialized = 1;
+}
+
+static dispatch_queue_t g_io_gcd_queue = NULL;
+
+static void io_pool_dispatch(InferPreadTask *tasks, int num_tasks) {
+    if (num_tasks == 0) return;
+    if (!g_io_gcd_queue)
+        g_io_gcd_queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+    // GCD dispatch_apply: zero-overhead parallel dispatch, blocks until done
+    dispatch_apply((size_t)num_tasks, g_io_gcd_queue, ^(size_t i) {
+        InferPreadTask *t = &tasks[i];
+        t->result = pread(t->fd, t->dst, t->size, t->offset);
+    });
+}
+
+static void io_pool_shutdown(void) {
+    if (!g_io_pool_initialized) return;
+    pthread_mutex_lock(&g_io_pool.mutex);
+    g_io_pool.shutdown = 1;
+    pthread_cond_broadcast(&g_io_pool.work_ready);
+    pthread_mutex_unlock(&g_io_pool.mutex);
+    for (int i = 0; i < NUM_IO_THREADS; i++)
+        pthread_join(g_io_pool.threads[i], NULL);
+    pthread_mutex_destroy(&g_io_pool.mutex);
+    pthread_cond_destroy(&g_io_pool.work_ready);
+    pthread_cond_destroy(&g_io_pool.work_done);
+    g_io_pool_initialized = 0;
+}
+
 // Parallel pread of K experts into Metal buffers using pthreads.
 // Returns number of successfully loaded experts, sets valid[] flags.
 static int parallel_pread_experts(
     int packed_fd,
     int *expert_indices,
     int K,
-    int *valid  // [MAX_K] output: 1 if expert loaded successfully
+    int *valid,  // [MAX_K] output: 1 if expert loaded successfully
+    const void *mmap_base  // mmap'd layer file (NULL to use pread)
 ) {
     InferPreadTask tasks[MAX_K];
     for (int k = 0; k < K; k++) {
@@ -2606,21 +2756,10 @@ static int parallel_pread_experts(
         tasks[k].offset = (off_t)expert_indices[k] * EXPERT_SIZE;
         tasks[k].size = EXPERT_SIZE;
         tasks[k].result = 0;
+        tasks[k].mmap_base = mmap_base;
     }
 
-    int nthreads = (K < NUM_IO_THREADS) ? K : NUM_IO_THREADS;
-    pthread_t threads[NUM_IO_THREADS];
-    InferPreadThreadArg args[NUM_IO_THREADS];
-
-    for (int t = 0; t < nthreads; t++) {
-        args[t].tasks = tasks;
-        args[t].num_tasks = K;
-        args[t].thread_id = t;
-        pthread_create(&threads[t], NULL, infer_pread_thread_fn, &args[t]);
-    }
-    for (int t = 0; t < nthreads; t++) {
-        pthread_join(threads[t], NULL);
-    }
+    io_pool_dispatch(tasks, K);
 
     int loaded = 0;
     for (int k = 0; k < K; k++) {
@@ -2654,19 +2793,7 @@ static int parallel_pread_experts_into(
         tasks[k].result = 0;
     }
 
-    int nthreads = (K < NUM_IO_THREADS) ? K : NUM_IO_THREADS;
-    pthread_t threads[NUM_IO_THREADS];
-    InferPreadThreadArg args[NUM_IO_THREADS];
-
-    for (int t = 0; t < nthreads; t++) {
-        args[t].tasks = tasks;
-        args[t].num_tasks = K;
-        args[t].thread_id = t;
-        pthread_create(&threads[t], NULL, infer_pread_thread_fn, &args[t]);
-    }
-    for (int t = 0; t < nthreads; t++) {
-        pthread_join(threads[t], NULL);
-    }
+    io_pool_dispatch(tasks, K);
 
     int loaded = 0;
     for (int k = 0; k < K; k++) {
@@ -2861,18 +2988,7 @@ static void *infer_prefetch_thread_fn(void *arg) {
             tasks[k].result = 0;
         }
 
-        int nthreads = (plan->K < NUM_IO_THREADS) ? plan->K : NUM_IO_THREADS;
-        pthread_t threads[NUM_IO_THREADS];
-        InferPreadThreadArg args[NUM_IO_THREADS];
-        for (int t = 0; t < nthreads; t++) {
-            args[t].tasks = tasks;
-            args[t].num_tasks = plan->K;
-            args[t].thread_id = t;
-            pthread_create(&threads[t], NULL, infer_pread_thread_fn, &args[t]);
-        }
-        for (int t = 0; t < nthreads; t++) {
-            pthread_join(threads[t], NULL);
-        }
+        io_pool_dispatch(tasks, plan->K);
 
         plan->loaded = 0;
         for (int k = 0; k < plan->K; k++) {
@@ -3255,11 +3371,12 @@ static void fused_layer_forward(
     KVCache *kv,             // non-NULL for full attention layers
     LinearAttnState *la_state, // non-NULL for linear attention layers
     int pos,                 // position for RoPE
+    const void *mmap_base,   // mmap'd layer file (NULL if not available)
     int K,                   // number of active experts
     int packed_fd            // fd for packed expert file
 ) {
-    double t_layer_start = now_ms();
-    double t0, t1;
+    double t_layer_start = 0, t0 = 0, t1 = 0;
+    if (g_timing_enabled) { t_layer_start = now_ms(); }
 
     init_layer_scratch();
     if (!layer_cache_built) build_layer_cache(wf);
@@ -3316,25 +3433,22 @@ static void fused_layer_forward(
     id<MTLCommandBuffer> cmd1 = nil;
 
     // Complete deferred experts from previous layer
-    t0 = now_ms();
+    if (g_timing_enabled) { t0 = now_ms(); }
     wait_deferred_experts_gpu();
-    t1 = now_ms();
-    g_timing.deferred_wait += t1 - t0;
+    if (g_timing_enabled) { t1 = now_ms(); g_timing.deferred_wait += t1 - t0; }
 
-    t0 = t1;
+    if (g_timing_enabled) { t0 = now_ms(); }
     finalize_deferred_experts();
-    t1 = now_ms();
-    g_timing.deferred_cpu += t1 - t0;
+    if (g_timing_enabled) { t1 = now_ms(); g_timing.deferred_cpu += t1 - t0; }
 
     // Input norm
-    t0 = t1;
+    if (g_timing_enabled) { t0 = now_ms(); }
     cpu_vec_copy(residual, hidden, HIDDEN_DIM);
     cpu_rms_norm(hidden, lc->input_norm_w, normed, HIDDEN_DIM, RMS_NORM_EPS);
-    t1 = now_ms();
-    g_timing.input_norm += t1 - t0;
+    if (g_timing_enabled) { t1 = now_ms(); g_timing.input_norm += t1 - t0; }
 
     // Submit CMD1: attention projections
-    t0 = t1;
+    if (g_timing_enabled) { t0 = now_ms(); }
     if (g_metal && g_metal->wf_buf && num_attn_specs > 0) {
         memcpy([g_metal->buf_input contents], normed, HIDDEN_DIM * sizeof(float));
         cmd1 = [g_metal->queue commandBuffer];
@@ -3347,23 +3461,21 @@ static void fused_layer_forward(
                                s->out_dim, s->in_dim, s->group_size);
         }
     }
-    t1 = now_ms();
-    g_timing.cmd1_submit += t1 - t0;
+    if (g_timing_enabled) { t1 = now_ms(); g_timing.cmd1_submit += t1 - t0; }
 
     // Wait for CMD1
-    t0 = t1;
+    if (g_timing_enabled) { t0 = now_ms(); }
     if (cmd1) {
         [cmd1 waitUntilCompleted];
         gpu_flush_batch_results(g_metal, attn_specs, num_attn_specs);
     }
-    t1 = now_ms();
-    g_timing.cmd1_wait += t1 - t0;
+    if (g_timing_enabled) { t1 = now_ms(); g_timing.cmd1_wait += t1 - t0; }
 
     // =====================================================================
     // PHASE 2: CPU attention compute
     // =====================================================================
 
-    t0 = now_ms();
+    if (g_timing_enabled) { t0 = now_ms(); }
 
     float *attn_projected = s_attn_proj;
     memset(attn_projected, 0, HIDDEN_DIM * sizeof(float));
@@ -3555,38 +3667,82 @@ static void fused_layer_forward(
                 beta_gate_arr[vh] = cpu_sigmoid(beta_out[vh]);
             }
 
-            for (int vh = 0; vh < LINEAR_NUM_V_HEADS; vh++) {
-                int kh = vh / k_heads_per_v;
-                float g = g_decay[vh];
-                float b_gate = beta_gate_arr[vh];
-                float *S = la_state->ssm_state + vh * LINEAR_VALUE_DIM * LINEAR_KEY_DIM;
-                float *v_h = lin_v + vh * LINEAR_VALUE_DIM;
-                float *k_h = lin_k + kh * LINEAR_KEY_DIM;
+            // Compute linear_layer_idx: count of non-full-attention layers before this one.
+            // Full attention at (layer_idx+1) % 4 == 0, i.e. layers 3,7,11,...
+            // linear_layer_idx = layer_idx - number_of_full_layers_at_or_before
+            //                  = layer_idx - (layer_idx + 1) / FULL_ATTN_INTERVAL
+            int linear_layer_idx = layer_idx - (layer_idx + 1) / FULL_ATTN_INTERVAL;
 
-                for (int vi = 0; vi < LINEAR_VALUE_DIM; vi++) {
-                    for (int ki = 0; ki < LINEAR_KEY_DIM; ki++) {
-                        S[vi * LINEAR_KEY_DIM + ki] *= g;
-                    }
-                }
-                for (int vi = 0; vi < LINEAR_VALUE_DIM; vi++) {
-                    float kv_mem = 0.0f;
-                    for (int ki = 0; ki < LINEAR_KEY_DIM; ki++) {
-                        kv_mem += S[vi * LINEAR_KEY_DIM + ki] * k_h[ki];
-                    }
-                    float delta = (v_h[vi] - kv_mem) * b_gate;
-                    for (int ki = 0; ki < LINEAR_KEY_DIM; ki++) {
-                        S[vi * LINEAR_KEY_DIM + ki] += k_h[ki] * delta;
-                    }
-                }
+            // GPU delta-net path (falls back to CPU if pipeline unavailable)
+            if (g_metal && g_metal->delta_net_step &&
+                linear_layer_idx >= 0 && linear_layer_idx < NUM_LINEAR_LAYERS) {
+                // Upload CPU-computed data to GPU scratch buffers
+                memcpy([g_metal->buf_delta_q contents], lin_q, LINEAR_TOTAL_KEY * sizeof(float));
+                memcpy([g_metal->buf_delta_k contents], lin_k, LINEAR_TOTAL_KEY * sizeof(float));
+                memcpy([g_metal->buf_delta_v contents], lin_v, LINEAR_TOTAL_VALUE * sizeof(float));
+                memcpy([g_metal->buf_delta_g_decay contents], g_decay, LINEAR_NUM_V_HEADS * sizeof(float));
+                memcpy([g_metal->buf_delta_beta contents], beta_gate_arr, LINEAR_NUM_V_HEADS * sizeof(float));
 
-                float *q_h = lin_q + kh * LINEAR_KEY_DIM;
-                float *o_h = out_values + vh * LINEAR_VALUE_DIM;
-                for (int vi = 0; vi < LINEAR_VALUE_DIM; vi++) {
-                    float sum = 0.0f;
-                    for (int ki = 0; ki < LINEAR_KEY_DIM; ki++) {
-                        sum += S[vi * LINEAR_KEY_DIM + ki] * q_h[ki];
+                id<MTLCommandBuffer> cmd_dn = [g_metal->queue commandBuffer];
+                id<MTLComputeCommandEncoder> enc = [cmd_dn computeCommandEncoder];
+                [enc setComputePipelineState:g_metal->delta_net_step];
+                [enc setBuffer:g_metal->buf_delta_state[linear_layer_idx] offset:0 atIndex:0];
+                [enc setBuffer:g_metal->buf_delta_q       offset:0 atIndex:1];
+                [enc setBuffer:g_metal->buf_delta_k       offset:0 atIndex:2];
+                [enc setBuffer:g_metal->buf_delta_v       offset:0 atIndex:3];
+                [enc setBuffer:g_metal->buf_delta_g_decay offset:0 atIndex:4];
+                [enc setBuffer:g_metal->buf_delta_beta    offset:0 atIndex:5];
+                [enc setBuffer:g_metal->buf_delta_output  offset:0 atIndex:6];
+                uint32_t khpv = (uint32_t)k_heads_per_v;
+                [enc setBytes:&khpv length:sizeof(khpv) atIndex:7];
+                [enc dispatchThreadgroups:MTLSizeMake(LINEAR_NUM_V_HEADS, 1, 1)
+                    threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+                [enc endEncoding];
+                [cmd_dn commit];
+                [cmd_dn waitUntilCompleted];
+
+                // Read back GPU result
+                memcpy(out_values, [g_metal->buf_delta_output contents], LINEAR_TOTAL_VALUE * sizeof(float));
+            } else {
+                // CPU delta-net with Accelerate BLAS
+                for (int vh = 0; vh < LINEAR_NUM_V_HEADS; vh++) {
+                    int kh = vh / k_heads_per_v;
+                    float g = g_decay[vh];
+                    float b_gate = beta_gate_arr[vh];
+                    float *S = la_state->ssm_state + vh * LINEAR_VALUE_DIM * LINEAR_KEY_DIM;
+                    float *v_h = lin_v + vh * LINEAR_VALUE_DIM;
+                    float *k_h = lin_k + kh * LINEAR_KEY_DIM;
+
+                    // Step 1: Decay S *= g (BLAS sscal on entire state matrix)
+                    cblas_sscal(LINEAR_VALUE_DIM * LINEAR_KEY_DIM, g, S, 1);
+
+                    // Step 2: kv_mem = S @ k (each row dot k)
+                    // S is [VALUE_DIM x KEY_DIM] row-major, k is [KEY_DIM]
+                    // kv_mem[vi] = sum_ki(S[vi,ki] * k[ki]) = matrix-vector: S @ k
+                    float kv_mem_vec[LINEAR_VALUE_DIM];
+                    cblas_sgemv(CblasRowMajor, CblasNoTrans,
+                                LINEAR_VALUE_DIM, LINEAR_KEY_DIM,
+                                1.0f, S, LINEAR_KEY_DIM, k_h, 1,
+                                0.0f, kv_mem_vec, 1);
+
+                    // Step 3: delta = (v - kv_mem) * beta, then rank-1 update S += k * delta^T
+                    // delta[vi] = (v[vi] - kv_mem[vi]) * beta
+                    float delta_vec[LINEAR_VALUE_DIM];
+                    for (int vi = 0; vi < LINEAR_VALUE_DIM; vi++) {
+                        delta_vec[vi] = (v_h[vi] - kv_mem_vec[vi]) * b_gate;
                     }
-                    o_h[vi] = sum;
+                    // S += delta @ k^T (rank-1 update: sger)
+                    // S[vi,ki] += delta[vi] * k[ki]
+                    cblas_sger(CblasRowMajor, LINEAR_VALUE_DIM, LINEAR_KEY_DIM,
+                               1.0f, delta_vec, 1, k_h, 1, S, LINEAR_KEY_DIM);
+
+                    // Step 4: output = S @ q (matrix-vector multiply)
+                    float *q_h = lin_q + kh * LINEAR_KEY_DIM;
+                    float *o_h = out_values + vh * LINEAR_VALUE_DIM;
+                    cblas_sgemv(CblasRowMajor, CblasNoTrans,
+                                LINEAR_VALUE_DIM, LINEAR_KEY_DIM,
+                                1.0f, S, LINEAR_KEY_DIM, q_h, 1,
+                                0.0f, o_h, 1);
                 }
             }
 
@@ -3626,10 +3782,9 @@ static void fused_layer_forward(
     //   Buffer flow: batch_out[6]->buf_output->buf_h_mid->buf_input->batch_out[0-3]
     // =====================================================================
 
-    t1 = now_ms();
-    g_timing.cpu_attn += t1 - t0;
+    if (g_timing_enabled) { t1 = now_ms(); g_timing.cpu_attn += t1 - t0; }
 
-    t0 = t1;
+    if (g_timing_enabled) { t0 = now_ms(); }
 
     float *h_post = s_h_post;
     float *h_mid = s_h_mid;
@@ -3843,11 +3998,10 @@ static void fused_layer_forward(
         // buf_input already contains h_post from Enc 4 output -- no memcpy needed
         gpu_encode_batch_matvec(g_metal, cmd_fused, moe_specs, 4);
 
-        t1 = now_ms();
-        g_timing.cmd2_encode += t1 - t0;
+        if (g_timing_enabled) { t1 = now_ms(); g_timing.cmd2_encode += t1 - t0; }
 
         // ---- Single commit+wait for all 8 encoders ----
-        t0 = t1;
+        if (g_timing_enabled) { t0 = now_ms(); }
         [cmd_fused commit];
         [cmd_fused waitUntilCompleted];
 
@@ -3859,8 +4013,7 @@ static void fused_layer_forward(
         memcpy(h_post, [g_metal->buf_input contents], HIDDEN_DIM * sizeof(float));
         // Update hidden state to h_mid (= residual + o_proj)
         memcpy(hidden, h_mid, HIDDEN_DIM * sizeof(float));
-        t1 = now_ms();
-        g_timing.cmd2_wait += t1 - t0;
+        if (g_timing_enabled) { t1 = now_ms(); g_timing.cmd2_wait += t1 - t0; }
 
     } else {
         // ---- Non-fused fallback path ----
@@ -3893,23 +4046,20 @@ static void fused_layer_forward(
             };
             fast_batch_matvec(h_post, HIDDEN_DIM, moe_specs, 4);
         }
-        t1 = now_ms();
-        g_timing.cmd2_encode += t1 - t0;
-        g_timing.cmd2_wait += 0;  // no GPU wait in fallback
+        if (g_timing_enabled) { t1 = now_ms(); g_timing.cmd2_encode += t1 - t0; }
     }
 
     // ---- Softmax + top-K (CPU) ----
-    t0 = now_ms();
+    if (g_timing_enabled) { t0 = now_ms(); }
     cpu_softmax(gate_scores, NUM_EXPERTS);
     int expert_indices[64];
     float expert_weights[64];
     cpu_topk(gate_scores, NUM_EXPERTS, K, expert_indices, expert_weights);
     cpu_normalize_weights(expert_weights, K);
-    t1 = now_ms();
-    g_timing.routing_cpu += t1 - t0;
+    if (g_timing_enabled) { t1 = now_ms(); g_timing.routing_cpu += t1 - t0; }
 
     // ---- Parallel pread + GPU experts ----
-    t0 = t1;
+    if (g_timing_enabled) { t0 = now_ms(); }
     float *moe_out = s_moe_out;
     memset(moe_out, 0, HIDDEN_DIM * sizeof(float));
     float *shared_out = s_shared_out;
@@ -3966,21 +4116,10 @@ static void fused_layer_forward(
                     tasks[m].offset = (off_t)expert_indices[k] * EXPERT_SIZE;
                     tasks[m].size = EXPERT_SIZE;
                     tasks[m].result = 0;
+                    tasks[m].mmap_base = mmap_base;
                 }
 
-                int nthreads = (num_misses < NUM_IO_THREADS) ? num_misses : NUM_IO_THREADS;
-                pthread_t threads[NUM_IO_THREADS];
-                InferPreadThreadArg args[NUM_IO_THREADS];
-
-                for (int t = 0; t < nthreads; t++) {
-                    args[t].tasks = tasks;
-                    args[t].num_tasks = num_misses;
-                    args[t].thread_id = t;
-                    pthread_create(&threads[t], NULL, infer_pread_thread_fn, &args[t]);
-                }
-                for (int t = 0; t < nthreads; t++) {
-                    pthread_join(threads[t], NULL);
-                }
+                io_pool_dispatch(tasks, num_misses);
 
                 // Mark successfully loaded misses as valid
                 for (int m = 0; m < num_misses; m++) {
@@ -3994,17 +4133,16 @@ static void fused_layer_forward(
             }
         } else {
             // ---- No cache: original parallel pread into buf_multi_expert_data ----
-            parallel_pread_experts(packed_fd, expert_indices, actual_K, valid);
+            parallel_pread_experts(packed_fd, expert_indices, actual_K, valid, mmap_base);
             for (int k = 0; k < actual_K; k++) {
                 expert_bufs[k] = g_metal->buf_multi_expert_data[k];
             }
         }
 
         // Step 2: copy input
-        t1 = now_ms();
-        g_timing.expert_io += t1 - t0;
+        if (g_timing_enabled) { t1 = now_ms(); g_timing.expert_io += t1 - t0; }
 
-        t0 = t1;
+        if (g_timing_enabled) { t0 = now_ms(); }
         memcpy([g_metal->buf_multi_expert_input contents], h_post, HIDDEN_DIM * sizeof(float));
 
         // Step 3: encode ALL experts + shared expert into ONE command buffer.
@@ -4048,11 +4186,12 @@ static void fused_layer_forward(
         // fused_layer_forward(), overlapping ~1ms of GPU expert compute
         // with the next layer's attention+routing work.
         [cmd_experts commit];
-        t1 = now_ms();
-        g_timing.cmd3_encode += t1 - t0;
-
-        g_timing.count++;
-        g_timing.total += t1 - t_layer_start;
+        if (g_timing_enabled) {
+            t1 = now_ms();
+            g_timing.cmd3_encode += t1 - t0;
+            g_timing.count++;
+            g_timing.total += t1 - t_layer_start;
+        }
 
         // Save state for deferred completion
         g_deferred.active = 1;
@@ -4147,10 +4286,12 @@ static void fused_layer_forward(
         hidden[i] = h_mid[i] + moe_out[i] + shared_out[i];
     }
 
-    t1 = now_ms();
-    g_timing.cmd3_encode += t1 - t0;  // includes CPU expert compute for non-GPU paths
-    g_timing.count++;
-    g_timing.total += t1 - t_layer_start;
+    if (g_timing_enabled) {
+        t1 = now_ms();
+        g_timing.cmd3_encode += t1 - t0;  // includes CPU expert compute for non-GPU paths
+        g_timing.count++;
+        g_timing.total += t1 - t_layer_start;
+    }
 
     // h_post, h_mid, gate_scores, moe_out, shared_out, shared_gate, shared_up
     // are all static scratch buffers — no free needed.
@@ -4170,7 +4311,8 @@ static void print_usage(const char *prog) {
     printf("  --prompt TEXT         Prompt text (requires encode_prompt.py)\n");
     printf("  --tokens N           Max tokens to generate (default: 20)\n");
     printf("  --k N                Active experts per layer (default: 4)\n");
-    printf("  --cache-entries N    Expert LRU cache size (default: 0 = disabled, typical: 2000)\n");
+    printf("  --cache-entries N    Expert LRU cache size (default: 1500, 0 = disabled)\n");
+    printf("  --timing             Enable per-layer timing breakdown\n");
     printf("  --help               This message\n");
 }
 
@@ -4184,7 +4326,7 @@ int main(int argc, char **argv) {
         const char *prompt_text = NULL;
         int max_tokens = 20;
         int K = 4;
-        int cache_entries = 0;  // 0 = disabled, typical: 2000
+        int cache_entries = 1500;  // default 1500 entries (override with --cache-entries)
 
         static struct option long_options[] = {
             {"model",         required_argument, 0, 'm'},
@@ -4197,12 +4339,13 @@ int main(int argc, char **argv) {
             {"k",             required_argument, 0, 'k'},
             {"cache-entries", required_argument, 0, 'C'},
             {"skip-linear",   no_argument,       0, 'S'},
+            {"timing",        no_argument,       0, 'T'},
             {"help",          no_argument,       0, 'h'},
             {0, 0, 0, 0}
         };
 
         int c;
-        while ((c = getopt_long(argc, argv, "m:w:j:v:p:P:t:k:C:Sh", long_options, NULL)) != -1) {
+        while ((c = getopt_long(argc, argv, "m:w:j:v:p:P:t:k:C:STh", long_options, NULL)) != -1) {
             switch (c) {
                 case 'm': model_path = optarg; break;
                 case 'w': weights_path = optarg; break;
@@ -4214,6 +4357,7 @@ int main(int argc, char **argv) {
                 case 'k': K = atoi(optarg); break;
                 case 'C': cache_entries = atoi(optarg); break;
                 case 'S': linear_attn_bypass = 1; break;
+                case 'T': g_timing_enabled = 1; break;
                 case 'h': print_usage(argv[0]); return 0;
                 default:  print_usage(argv[0]); return 1;
             }
@@ -4257,6 +4401,9 @@ int main(int argc, char **argv) {
         if (!g_metal) {
             fprintf(stderr, "WARNING: Metal init failed, falling back to CPU\n");
         }
+
+        // ---- Initialize persistent I/O thread pool ----
+        io_pool_init();
 
         // ---- Initialize expert LRU cache ----
         if (cache_entries > 0 && g_metal) {
@@ -4351,24 +4498,37 @@ int main(int argc, char **argv) {
         }
         printf("\n");
 
-        // ---- Open packed expert files ----
+        // ---- Open + mmap packed expert files ----
         int layer_fds[NUM_LAYERS];
+        void *layer_mmaps[NUM_LAYERS];
+        size_t layer_mmap_sizes[NUM_LAYERS];
         int expert_layers_available = 0;
         for (int i = 0; i < NUM_LAYERS; i++) {
             char path[1024];
             snprintf(path, sizeof(path), "%s/packed_experts/layer_%02d.bin", model_path, i);
             layer_fds[i] = open(path, O_RDONLY);
-            if (layer_fds[i] >= 0) expert_layers_available++;
+            layer_mmaps[i] = MAP_FAILED;
+            layer_mmap_sizes[i] = 0;
+            if (layer_fds[i] >= 0) {
+                expert_layers_available++;
+                struct stat st;
+                if (fstat(layer_fds[i], &st) == 0 && st.st_size > 0) {
+                    layer_mmaps[i] = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, layer_fds[i], 0);
+                    if (layer_mmaps[i] != MAP_FAILED) {
+                        layer_mmap_sizes[i] = st.st_size;
+                        madvise(layer_mmaps[i], st.st_size, MADV_RANDOM);
+                    }
+                }
+            }
         }
-        printf("[experts] %d/%d packed layer files available\n", expert_layers_available, NUM_LAYERS);
+        printf("[experts] %d/%d packed layer files available (mmap'd)\n", expert_layers_available, NUM_LAYERS);
 
-        // Pre-warm page cache: read first few experts per layer to trigger readahead
+        // Warm page cache hint
         if (expert_layers_available > 0) {
             double t_warm = now_ms();
-            char dummy[4096];
             for (int i = 0; i < NUM_LAYERS; i++) {
                 if (layer_fds[i] >= 0) {
-                    // Read first 4KB of each layer file to trigger OS readahead
+                    char dummy[4096];
                     pread(layer_fds[i], dummy, sizeof(dummy), 0);
                 }
             }
@@ -4396,6 +4556,7 @@ int main(int argc, char **argv) {
         float *logits = calloc(VOCAB_SIZE, sizeof(float));
 
         // ---- Generate tokens ----
+        reset_delta_net_state();  // zero GPU delta-net state before generation
         printf("--- Generating %d tokens ---\n", max_tokens);
         int pos = 0;  // position counter for RoPE
 
@@ -4420,7 +4581,9 @@ int main(int argc, char **argv) {
                 fused_layer_forward(wf, layer, hidden,
                                     is_full ? kv_caches[layer] : NULL,
                                     is_full ? NULL : layer_states[layer],
-                                    pos, K, layer_fds[layer]);
+                                    pos,
+                                    layer_mmaps[layer] != MAP_FAILED ? layer_mmaps[layer] : NULL,
+                                    K, layer_fds[layer]);
             }
             // Complete last layer's deferred GPU experts before final norm
             complete_deferred_experts();
@@ -4483,7 +4646,7 @@ int main(int argc, char **argv) {
         int total_generated = 1;
 
         // ---- Auto-regressive generation ----
-        timing_reset();
+        if (g_timing_enabled) timing_reset();
         for (int gen = 1; gen < max_tokens; gen++) {
             double t_gen_start = now_ms();
 
@@ -4502,7 +4665,9 @@ int main(int argc, char **argv) {
                 fused_layer_forward(wf, layer, hidden,
                                     is_full ? kv_caches[layer] : NULL,
                                     is_full ? NULL : layer_states[layer],
-                                    pos, K, layer_fds[layer]);
+                                    pos,
+                                    layer_mmaps[layer] != MAP_FAILED ? layer_mmaps[layer] : NULL,
+                                    K, layer_fds[layer]);
             }
             // Complete last layer's deferred GPU experts before final norm
             complete_deferred_experts();
@@ -4535,7 +4700,7 @@ int main(int argc, char **argv) {
                     gen, max_tokens, next_token, tok_time, 1000.0 / tok_time);
         }
 
-        timing_print();
+        if (g_timing_enabled) timing_print();
         printf("\n\n--- Statistics ---\n");
         double total_time = now_ms() - t0;
         printf("Total time:     %.1f s\n", total_time / 1000.0);
@@ -4556,6 +4721,7 @@ int main(int argc, char **argv) {
         }
 
         // ---- Cleanup ----
+        io_pool_shutdown();
         if (g_expert_cache) {
             expert_cache_free(g_expert_cache);
             g_expert_cache = NULL;
@@ -4563,6 +4729,7 @@ int main(int argc, char **argv) {
         for (int i = 0; i < NUM_LAYERS; i++) {
             if (kv_caches[i]) kv_cache_free(kv_caches[i]);
             if (layer_states[i]) linear_attn_state_free(layer_states[i]);
+            if (layer_mmaps[i] != MAP_FAILED) munmap(layer_mmaps[i], layer_mmap_sizes[i]);
             if (layer_fds[i] >= 0) close(layer_fds[i]);
         }
         free(layer_states);
