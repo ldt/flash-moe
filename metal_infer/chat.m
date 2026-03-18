@@ -21,6 +21,7 @@
 #include <arpa/inet.h>
 #include <getopt.h>
 #include <dirent.h>
+#include "linenoise.h"
 
 #define MAX_INPUT_LINE 4096
 #define MAX_RESPONSE (1024 * 1024)
@@ -569,22 +570,32 @@ int main(int argc, char **argv) {
 
     printf("Ready to chat.\n\n");
 
-    char input_line[MAX_INPUT_LINE];
+    // Set up linenoise: history, hints
+    linenoiseSetMultiLine(1);  // allow multi-line input with arrow keys
+    char history_path[1024];
+    snprintf(history_path, sizeof(history_path), "%s/.flash-moe/history", getenv("HOME") ?: "/tmp");
+    linenoiseHistoryLoad(history_path);
+    linenoiseHistorySetMaxLen(500);
 
     for (;;) {
-        printf("> ");
-        fflush(stdout);
-
-        if (!fgets(input_line, sizeof(input_line), stdin)) {
+        char *line = linenoise("> ");
+        if (!line) {
             printf("\n");
             break;
         }
 
-        size_t len = strlen(input_line);
-        while (len > 0 && (input_line[len-1] == '\n' || input_line[len-1] == '\r'))
-            input_line[--len] = 0;
+        size_t len = strlen(line);
+        if (len == 0) { free(line); continue; }
 
-        if (len == 0) continue;
+        // Add to history
+        linenoiseHistoryAdd(line);
+        linenoiseHistorySave(history_path);
+
+        char input_line[MAX_INPUT_LINE];
+        strncpy(input_line, line, MAX_INPUT_LINE - 1);
+        input_line[MAX_INPUT_LINE - 1] = 0;
+        free(line);
+
         if (strcmp(input_line, "/quit") == 0 || strcmp(input_line, "/exit") == 0) {
             printf("Goodbye.\n");
             break;
