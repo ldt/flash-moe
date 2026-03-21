@@ -5850,6 +5850,717 @@ static const char *CORS_RESPONSE =
     "Access-Control-Max-Age: 86400\r\n"
     "\r\n";
 
+// ============================================================================
+// OpenAI-Compatible Messages Array Parser (for OpenCode integration)
+// ============================================================================
+
+// Parsed message from OpenAI messages array
+typedef struct {
+    char *role;      // "system", "user", "assistant", "tool"
+    char *content;   // message content (may be NULL for tool_calls-only assistant msgs)
+    // Tool call fields (assistant role)
+    char *tool_calls_raw;  // raw JSON array of tool_calls (for assistant messages)
+    // Tool result fields (tool role)
+    char *tool_call_id;    // ID of the tool call this is responding to
+} ParsedMessage;
+
+typedef struct {
+    ParsedMessage *msgs;
+    int count;
+    int capacity;
+} ParsedMessages;
+
+// Minimal JSON string extraction: find "key": "value" and return malloc'd copy of value.
+// Handles escape sequences. Returns NULL if not found.
+// Starts searching from *pos, updates *pos past the closing quote.
+static char *json_extract_string(const char *buf, const char *key, const char **pos) {
+    char needle[128];
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    const char *p = *pos;
+    p = strstr(p, needle);
+    if (!p) return NULL;
+    p += strlen(needle);
+    // Skip whitespace and colon
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ':') p++;
+    if (*p == 'n' && strncmp(p, "null", 4) == 0) {
+        *pos = p + 4;
+        return NULL;
+    }
+    if (*p != '"') return NULL;
+    p++; // skip opening quote
+    // Measure string length (handling escapes)
+    const char *start = p;
+    int len = 0;
+    while (*p && !(*p == '"' && *(p-1) != '\\')) { p++; len++; }
+    char *result = malloc(len + 1);
+    // Copy with unescape
+    char *w = result;
+    const char *r = start;
+    while (r < p) {
+        if (*r == '\\' && r + 1 < p) {
+            r++;
+            switch (*r) {
+                case 'n': *w++ = '\n'; break;
+                case 't': *w++ = '\t'; break;
+                case 'r': *w++ = '\r'; break;
+                case '"': *w++ = '"'; break;
+                case '\\': *w++ = '\\'; break;
+                case '/': *w++ = '/'; break;
+                default: *w++ = '\\'; *w++ = *r; break;
+            }
+            r++;
+        } else {
+            *w++ = *r++;
+        }
+    }
+    *w = '\0';
+    *pos = p + 1; // past closing quote
+    return result;
+}
+
+// Extract a JSON array or object starting at p. Returns malloc'd copy.
+// Handles nested braces/brackets and strings.
+static char *json_extract_block(const char *p, const char **end_out) {
+    if (!p) return NULL;
+    char open = *p;
+    char close_ch = (open == '[') ? ']' : '}';
+    int depth = 1;
+    const char *start = p;
+    p++;
+    int in_string = 0;
+    while (*p && depth > 0) {
+        if (in_string) {
+            if (*p == '\\') { p++; } // skip escaped char
+            else if (*p == '"') { in_string = 0; }
+        } else {
+            if (*p == '"') { in_string = 1; }
+            else if (*p == open) { depth++; }
+            else if (*p == close_ch) { depth--; }
+        }
+        p++;
+    }
+    int len = (int)(p - start);
+    char *result = malloc(len + 1);
+    memcpy(result, start, len);
+    result[len] = '\0';
+    if (end_out) *end_out = p;
+    return result;
+}
+
+// Parse the OpenAI messages array from a JSON request body.
+// Returns a ParsedMessages struct with all messages extracted.
+static ParsedMessages parse_messages_array(const char *body) {
+    ParsedMessages result = {NULL, 0, 0};
+    result.capacity = 16;
+    result.msgs = calloc(result.capacity, sizeof(ParsedMessage));
+
+    // Find "messages" array
+    const char *p = strstr(body, "\"messages\"");
+    if (!p) return result;
+    p += 10;
+    while (*p && *p != '[') p++;
+    if (*p != '[') return result;
+    p++; // skip [
+
+    // Parse each message object
+    while (*p) {
+        // Skip whitespace and commas
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',') p++;
+        if (*p == ']') break;
+        if (*p != '{') break;
+
+        // Find the end of this message object
+        const char *obj_end;
+        char *obj = json_extract_block(p, &obj_end);
+        if (!obj) break;
+
+        // Grow array if needed
+        if (result.count >= result.capacity) {
+            result.capacity *= 2;
+            result.msgs = realloc(result.msgs, result.capacity * sizeof(ParsedMessage));
+        }
+
+        ParsedMessage *msg = &result.msgs[result.count];
+        memset(msg, 0, sizeof(ParsedMessage));
+
+        // Extract fields from this message object
+        const char *scan = obj;
+        msg->role = json_extract_string(obj, "role", &scan);
+        scan = obj;
+        msg->content = json_extract_string(obj, "content", &scan);
+        scan = obj;
+        msg->tool_call_id = json_extract_string(obj, "tool_call_id", &scan);
+
+        // Extract tool_calls array if present
+        const char *tc = strstr(obj, "\"tool_calls\"");
+        if (tc) {
+            tc += 12;
+            while (*tc && *tc != '[') tc++;
+            if (*tc == '[') {
+                const char *tc_end;
+                msg->tool_calls_raw = json_extract_block(tc, &tc_end);
+            }
+        }
+
+        if (msg->role) {
+            result.count++;
+        } else {
+            free(msg->content);
+            free(msg->tool_call_id);
+            free(msg->tool_calls_raw);
+        }
+
+        free(obj);
+        p = obj_end;
+    }
+
+    return result;
+}
+
+static void free_parsed_messages(ParsedMessages *pm) {
+    for (int i = 0; i < pm->count; i++) {
+        free(pm->msgs[i].role);
+        free(pm->msgs[i].content);
+        free(pm->msgs[i].tool_call_id);
+        free(pm->msgs[i].tool_calls_raw);
+    }
+    free(pm->msgs);
+    pm->msgs = NULL;
+    pm->count = 0;
+}
+
+// Extract tool definitions from "tools" array in request body.
+// Returns a malloc'd string block to inject into system prompt, or NULL.
+// Format follows Qwen3's expected tool description format.
+static char *extract_tools_for_prompt(const char *body) {
+    const char *p = strstr(body, "\"tools\"");
+    if (!p) return NULL;
+    p += 7;
+    while (*p && *p != '[') p++;
+    if (*p != '[') return NULL;
+
+    // Extract the entire tools array
+    const char *arr_end;
+    char *tools_json = json_extract_block(p, &arr_end);
+    if (!tools_json) return NULL;
+
+    // Build a text block describing each tool
+    // We'll parse individual tool objects from the array
+    size_t buf_size = 8192;
+    char *buf = malloc(buf_size);
+    int buf_len = 0;
+    buf_len += snprintf(buf + buf_len, buf_size - buf_len,
+        "\n\n# Tools\n\n"
+        "You may call one or more tools to assist with the user's request. "
+        "To call a tool, output a <tool_call> block with a JSON object containing "
+        "\"name\" and \"arguments\" keys.\n\n"
+        "Example:\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n\n"
+        "Available tools:\n\n");
+
+    // Walk through tools array extracting each tool definition
+    const char *tp = tools_json + 1; // skip [
+    while (*tp) {
+        while (*tp == ' ' || *tp == '\t' || *tp == '\n' || *tp == '\r' || *tp == ',') tp++;
+        if (*tp == ']') break;
+        if (*tp != '{') break;
+
+        const char *tool_end;
+        char *tool_obj = json_extract_block(tp, &tool_end);
+        if (!tool_obj) break;
+
+        // Extract function.name and function.description
+        const char *func_p = strstr(tool_obj, "\"function\"");
+        if (func_p) {
+            func_p += 10;
+            while (*func_p && *func_p != '{') func_p++;
+            if (*func_p == '{') {
+                const char *func_end;
+                char *func_obj = json_extract_block(func_p, &func_end);
+                if (func_obj) {
+                    const char *scan = func_obj;
+                    char *fname = json_extract_string(func_obj, "name", &scan);
+                    scan = func_obj;
+                    char *fdesc = json_extract_string(func_obj, "description", &scan);
+
+                    if (fname) {
+                        // Grow buffer if needed
+                        if (buf_len + 2048 > (int)buf_size) {
+                            buf_size *= 2;
+                            buf = realloc(buf, buf_size);
+                        }
+                        buf_len += snprintf(buf + buf_len, buf_size - buf_len,
+                            "## %s\n", fname);
+                        if (fdesc) {
+                            buf_len += snprintf(buf + buf_len, buf_size - buf_len,
+                                "%s\n", fdesc);
+                        }
+
+                        // Extract parameters schema if present
+                        const char *params_p = strstr(func_obj, "\"parameters\"");
+                        if (params_p) {
+                            params_p += 12;
+                            while (*params_p && *params_p != '{') params_p++;
+                            if (*params_p == '{') {
+                                const char *params_end;
+                                char *params_obj = json_extract_block(params_p, &params_end);
+                                if (params_obj) {
+                                    // Grow buffer if needed
+                                    if (buf_len + (int)strlen(params_obj) + 256 > (int)buf_size) {
+                                        buf_size = buf_size + strlen(params_obj) + 4096;
+                                        buf = realloc(buf, buf_size);
+                                    }
+                                    buf_len += snprintf(buf + buf_len, buf_size - buf_len,
+                                        "\nParameters (JSON Schema):\n```json\n%s\n```\n\n", params_obj);
+                                    free(params_obj);
+                                }
+                            }
+                        } else {
+                            buf_len += snprintf(buf + buf_len, buf_size - buf_len, "\n");
+                        }
+                    }
+                    free(fname);
+                    free(fdesc);
+                    free(func_obj);
+                }
+            }
+        }
+        free(tool_obj);
+        tp = tool_end;
+    }
+
+    free(tools_json);
+    return buf;
+}
+
+// Build a full ChatML prompt from parsed messages and optional tools block.
+// Returns malloc'd string ready for tokenization.
+static char *build_chatml_prompt(ParsedMessages *msgs, const char *tools_block) {
+    size_t buf_size = 64 * 1024; // 64KB initial
+    char *buf = malloc(buf_size);
+    int len = 0;
+
+    // Helper macro to grow buffer
+    #define CHATML_GROW(needed) do { \
+        while (len + (int)(needed) >= (int)buf_size) { \
+            buf_size *= 2; \
+            buf = realloc(buf, buf_size); \
+        } \
+    } while(0)
+
+    int has_system = 0;
+
+    for (int i = 0; i < msgs->count; i++) {
+        ParsedMessage *m = &msgs->msgs[i];
+        if (!m->role) continue;
+
+        if (strcmp(m->role, "system") == 0) {
+            has_system = 1;
+            int content_len = m->content ? (int)strlen(m->content) : 0;
+            int tools_len = tools_block ? (int)strlen(tools_block) : 0;
+            CHATML_GROW(content_len + tools_len + 128);
+            len += snprintf(buf + len, buf_size - len,
+                "<|im_start|>system\n%s", m->content ? m->content : "You are a helpful assistant.");
+            // Append tools block to system message
+            if (tools_block) {
+                len += snprintf(buf + len, buf_size - len, "%s", tools_block);
+            }
+            // Append /think to enable thinking
+            len += snprintf(buf + len, buf_size - len, " /think<|im_end|>\n");
+
+        } else if (strcmp(m->role, "user") == 0) {
+            int content_len = m->content ? (int)strlen(m->content) : 0;
+            CHATML_GROW(content_len + 64);
+            len += snprintf(buf + len, buf_size - len,
+                "<|im_start|>user\n%s<|im_end|>\n", m->content ? m->content : "");
+
+        } else if (strcmp(m->role, "assistant") == 0) {
+            if (m->tool_calls_raw) {
+                // Convert OpenAI tool_calls format back to <tool_call> XML
+                // Parse each tool call from the array
+                CHATML_GROW(strlen(m->tool_calls_raw) + 1024);
+                len += snprintf(buf + len, buf_size - len, "<|im_start|>assistant\n");
+                if (m->content) {
+                    CHATML_GROW(strlen(m->content) + 64);
+                    len += snprintf(buf + len, buf_size - len, "%s", m->content);
+                }
+                // Parse tool_calls array
+                const char *tc = m->tool_calls_raw;
+                while (*tc) {
+                    while (*tc == ' ' || *tc == '[' || *tc == ',' || *tc == '\n' || *tc == '\r' || *tc == '\t') tc++;
+                    if (*tc == ']' || *tc == '\0') break;
+                    if (*tc == '{') {
+                        const char *tc_end;
+                        char *tc_obj = json_extract_block(tc, &tc_end);
+                        if (tc_obj) {
+                            // Extract function.name and function.arguments
+                            const char *func_p = strstr(tc_obj, "\"function\"");
+                            if (func_p) {
+                                func_p += 10;
+                                while (*func_p && *func_p != '{') func_p++;
+                                if (*func_p == '{') {
+                                    const char *func_end;
+                                    char *func_obj = json_extract_block(func_p, &func_end);
+                                    if (func_obj) {
+                                        const char *scan = func_obj;
+                                        char *fname = json_extract_string(func_obj, "name", &scan);
+                                        scan = func_obj;
+                                        char *fargs = json_extract_string(func_obj, "arguments", &scan);
+                                        if (fname) {
+                                            CHATML_GROW((fargs ? strlen(fargs) : 2) + strlen(fname) + 128);
+                                            len += snprintf(buf + len, buf_size - len,
+                                                "\n<tool_call>\n{\"name\": \"%s\", \"arguments\": %s}\n</tool_call>",
+                                                fname, fargs ? fargs : "{}");
+                                        }
+                                        free(fname);
+                                        free(fargs);
+                                        free(func_obj);
+                                    }
+                                }
+                            }
+                            free(tc_obj);
+                            tc = tc_end;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        tc++;
+                    }
+                }
+                len += snprintf(buf + len, buf_size - len, "<|im_end|>\n");
+            } else {
+                int content_len = m->content ? (int)strlen(m->content) : 0;
+                CHATML_GROW(content_len + 64);
+                len += snprintf(buf + len, buf_size - len,
+                    "<|im_start|>assistant\n%s<|im_end|>\n", m->content ? m->content : "");
+            }
+
+        } else if (strcmp(m->role, "tool") == 0) {
+            // Tool result: wrap in <tool_response> block as a user message
+            int content_len = m->content ? (int)strlen(m->content) : 0;
+            CHATML_GROW(content_len + 128);
+            len += snprintf(buf + len, buf_size - len,
+                "<|im_start|>user\n<tool_response>\n%s\n</tool_response><|im_end|>\n",
+                m->content ? m->content : "");
+        }
+    }
+
+    // If no system message was present, prepend a default one
+    if (!has_system) {
+        const char *default_sys = "<|im_start|>system\nYou are a helpful assistant.";
+        int extra = (int)strlen(default_sys) + (tools_block ? (int)strlen(tools_block) : 0) + 64;
+        char *new_buf = malloc(buf_size + extra);
+        int new_len = 0;
+        new_len += snprintf(new_buf, buf_size + extra,
+            "%s", default_sys);
+        if (tools_block) {
+            new_len += snprintf(new_buf + new_len, buf_size + extra - new_len,
+                "%s", tools_block);
+        }
+        new_len += snprintf(new_buf + new_len, buf_size + extra - new_len,
+            " /think<|im_end|>\n");
+        memcpy(new_buf + new_len, buf, len);
+        new_len += len;
+        new_buf[new_len] = '\0';
+        free(buf);
+        buf = new_buf;
+        len = new_len;
+        buf_size += extra;
+    }
+
+    // Append assistant prompt to trigger generation
+    CHATML_GROW(64);
+    len += snprintf(buf + len, buf_size - len, "<|im_start|>assistant\n");
+
+    #undef CHATML_GROW
+    return buf;
+}
+
+// ============================================================================
+// Tool Call Streaming State Machine
+// ============================================================================
+
+// State for detecting <tool_call>...</tool_call> in streaming output
+typedef struct {
+    int state;          // 0=normal, 1=detecting_open_tag, 2=in_tool_call, 3=detecting_close_tag
+    char tag_buf[32];   // buffer for partial tag detection
+    int tag_len;
+    char *call_buf;     // buffer for tool call JSON content
+    int call_len;
+    int call_cap;
+    int tool_index;     // counter for tool call index
+    int has_tool_calls; // whether any tool calls were detected
+    char tool_call_id[32]; // generated tool call ID
+} ToolCallState;
+
+static void tool_call_state_init(ToolCallState *s) {
+    memset(s, 0, sizeof(ToolCallState));
+    s->call_cap = 4096;
+    s->call_buf = malloc(s->call_cap);
+    s->call_buf[0] = '\0';
+}
+
+static void tool_call_state_free(ToolCallState *s) {
+    free(s->call_buf);
+}
+
+// Send an SSE chunk with a tool_calls delta (first chunk with name, subsequent with args)
+static int sse_send_tool_call_start(int fd, const char *request_id, int index,
+                                     const char *call_id, const char *name) {
+    char chunk[4096];
+    // Escape name
+    char esc_name[512];
+    char *w = esc_name;
+    for (const char *r = name; *r && w < esc_name + sizeof(esc_name) - 8; r++) {
+        switch (*r) {
+            case '"':  *w++ = '\\'; *w++ = '"';  break;
+            case '\\': *w++ = '\\'; *w++ = '\\'; break;
+            default:   *w++ = *r; break;
+        }
+    }
+    *w = '\0';
+    int n = snprintf(chunk, sizeof(chunk),
+        "data: {\"id\":\"%s\",\"object\":\"chat.completion.chunk\","
+        "\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{"
+        "\"index\":%d,\"id\":\"%s\",\"type\":\"function\","
+        "\"function\":{\"name\":\"%s\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\n",
+        request_id, index, call_id, esc_name);
+    ssize_t wr = write(fd, chunk, n);
+    return (wr <= 0) ? -1 : 0;
+}
+
+static int sse_send_tool_call_args(int fd, const char *request_id, int index,
+                                    const char *args_chunk) {
+    // Escape args for JSON string embedding
+    size_t alen = strlen(args_chunk);
+    char *escaped = malloc(alen * 2 + 1);
+    char *w = escaped;
+    for (const char *r = args_chunk; *r; r++) {
+        switch (*r) {
+            case '"':  *w++ = '\\'; *w++ = '"';  break;
+            case '\\': *w++ = '\\'; *w++ = '\\'; break;
+            case '\n': *w++ = '\\'; *w++ = 'n';  break;
+            case '\r': *w++ = '\\'; *w++ = 'r';  break;
+            case '\t': *w++ = '\\'; *w++ = 't';  break;
+            default:   *w++ = *r; break;
+        }
+    }
+    *w = '\0';
+
+    size_t chunk_size = strlen(escaped) + 512;
+    char *chunk = malloc(chunk_size);
+    int n = snprintf(chunk, chunk_size,
+        "data: {\"id\":\"%s\",\"object\":\"chat.completion.chunk\","
+        "\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{"
+        "\"index\":%d,\"function\":{\"arguments\":\"%s\"}}]},\"finish_reason\":null}]}\n\n",
+        request_id, index, escaped);
+    ssize_t wr = write(fd, chunk, n);
+    free(escaped);
+    free(chunk);
+    return (wr <= 0) ? -1 : 0;
+}
+
+// Send finish with tool_calls reason
+static void sse_send_done_tool_calls(int fd, const char *request_id) {
+    char chunk[1024];
+    int n = snprintf(chunk, sizeof(chunk),
+        "data: {\"id\":\"%s\",\"object\":\"chat.completion.chunk\","
+        "\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+        "data: [DONE]\n\n",
+        request_id);
+    http_write(fd, chunk, n);
+}
+
+// Emit a completed tool call block as OpenAI-format SSE chunks.
+// Parses the JSON to extract name and arguments.
+static int emit_tool_call(int fd, const char *request_id, ToolCallState *state) {
+    // Parse {"name": "...", "arguments": {...}}
+    const char *scan = state->call_buf;
+    char *name = json_extract_string(state->call_buf, "name", &scan);
+    if (!name) {
+        // Fallback: send as content
+        return 0;
+    }
+
+    // Generate a tool call ID
+    snprintf(state->tool_call_id, sizeof(state->tool_call_id),
+             "call_%d", state->tool_index);
+
+    // Find arguments object/string
+    const char *args_p = strstr(state->call_buf, "\"arguments\"");
+    char *args_str = NULL;
+    if (args_p) {
+        args_p += 11;
+        while (*args_p == ' ' || *args_p == '\t' || *args_p == ':') args_p++;
+        if (*args_p == '{' || *args_p == '[') {
+            const char *args_end;
+            args_str = json_extract_block(args_p, &args_end);
+        } else if (*args_p == '"') {
+            // Arguments as string (already JSON-encoded)
+            args_p++;
+            const char *end = args_p;
+            while (*end && !(*end == '"' && *(end-1) != '\\')) end++;
+            int alen = (int)(end - args_p);
+            args_str = malloc(alen + 1);
+            memcpy(args_str, args_p, alen);
+            args_str[alen] = '\0';
+        }
+    }
+    if (!args_str) args_str = strdup("{}");
+
+    // Send tool call start (with name)
+    if (sse_send_tool_call_start(fd, request_id, state->tool_index,
+                                  state->tool_call_id, name) < 0) {
+        free(name); free(args_str);
+        return -1;
+    }
+
+    // Send arguments
+    if (sse_send_tool_call_args(fd, request_id, state->tool_index, args_str) < 0) {
+        free(name); free(args_str);
+        return -1;
+    }
+
+    state->tool_index++;
+    state->has_tool_calls = 1;
+    free(name);
+    free(args_str);
+    return 0;
+}
+
+// Process a token through the tool call state machine.
+// Returns: 0 = token handled (buffered or converted), 1 = pass through as content, -1 = error
+static int tool_call_process_token(int fd, const char *request_id,
+                                    const char *token, ToolCallState *state) {
+    if (!token || !*token) return 1;
+
+    // State machine processes character by character
+    for (const char *c = token; *c; c++) {
+        switch (state->state) {
+        case 0: // NORMAL
+            if (*c == '<') {
+                state->tag_buf[0] = '<';
+                state->tag_len = 1;
+                state->state = 1;
+            } else {
+                // Pass through as content — send single char
+                char tmp[2] = {*c, '\0'};
+                if (sse_send_delta(fd, request_id, tmp) < 0) return -1;
+            }
+            break;
+
+        case 1: // DETECTING_OPEN_TAG — accumulating potential <tool_call>
+            state->tag_buf[state->tag_len++] = *c;
+            state->tag_buf[state->tag_len] = '\0';
+            if (state->tag_len == 11) { // strlen("<tool_call>") == 11
+                if (strcmp(state->tag_buf, "<tool_call>") == 0) {
+                    // Matched! Start buffering tool call content
+                    state->state = 2;
+                    state->call_len = 0;
+                    state->call_buf[0] = '\0';
+                } else {
+                    // Not a match, flush buffered chars as content
+                    for (int i = 0; i < state->tag_len; i++) {
+                        char tmp[2] = {state->tag_buf[i], '\0'};
+                        if (sse_send_delta(fd, request_id, tmp) < 0) return -1;
+                    }
+                    state->state = 0;
+                    state->tag_len = 0;
+                }
+            } else if (state->tag_len < 11 &&
+                       strncmp(state->tag_buf, "<tool_call>", state->tag_len) != 0) {
+                // Prefix doesn't match, flush
+                for (int i = 0; i < state->tag_len; i++) {
+                    char tmp[2] = {state->tag_buf[i], '\0'};
+                    if (sse_send_delta(fd, request_id, tmp) < 0) return -1;
+                }
+                state->state = 0;
+                state->tag_len = 0;
+            }
+            break;
+
+        case 2: // IN_TOOL_CALL — buffering JSON content
+            if (*c == '<') {
+                // Might be start of </tool_call>
+                state->tag_buf[0] = '<';
+                state->tag_len = 1;
+                state->state = 3;
+            } else {
+                // Buffer the char
+                if (state->call_len + 2 >= state->call_cap) {
+                    state->call_cap *= 2;
+                    state->call_buf = realloc(state->call_buf, state->call_cap);
+                }
+                state->call_buf[state->call_len++] = *c;
+                state->call_buf[state->call_len] = '\0';
+            }
+            break;
+
+        case 3: // DETECTING_CLOSE_TAG — accumulating potential </tool_call>
+            state->tag_buf[state->tag_len++] = *c;
+            state->tag_buf[state->tag_len] = '\0';
+            if (state->tag_len == 12) { // strlen("</tool_call>") == 12
+                if (strcmp(state->tag_buf, "</tool_call>") == 0) {
+                    // Complete tool call! Emit as OpenAI format
+                    if (emit_tool_call(fd, request_id, state) < 0) return -1;
+                    state->state = 0;
+                    state->tag_len = 0;
+                    state->call_len = 0;
+                } else {
+                    // Not a close tag, append to call buffer
+                    for (int i = 0; i < state->tag_len; i++) {
+                        if (state->call_len + 2 >= state->call_cap) {
+                            state->call_cap *= 2;
+                            state->call_buf = realloc(state->call_buf, state->call_cap);
+                        }
+                        state->call_buf[state->call_len++] = state->tag_buf[i];
+                    }
+                    state->call_buf[state->call_len] = '\0';
+                    state->state = 2;
+                    state->tag_len = 0;
+                }
+            } else if (state->tag_len < 12 &&
+                       strncmp(state->tag_buf, "</tool_call>", state->tag_len) != 0) {
+                // Prefix doesn't match close tag, append to call buffer
+                for (int i = 0; i < state->tag_len; i++) {
+                    if (state->call_len + 2 >= state->call_cap) {
+                        state->call_cap *= 2;
+                        state->call_buf = realloc(state->call_buf, state->call_cap);
+                    }
+                    state->call_buf[state->call_len++] = state->tag_buf[i];
+                }
+                state->call_buf[state->call_len] = '\0';
+                state->state = 2;
+                state->tag_len = 0;
+            }
+            break;
+        }
+    }
+    return 0;
+}
+
+// Tokenize a raw ChatML prompt string (for full messages mode)
+static PromptTokens *tokenize_raw_chatml(const char *chatml) {
+    return encode_prompt_text_to_tokens(chatml);
+}
+
+// Check if request body has a proper messages array (for OpenCode-style requests)
+static int has_messages_array(const char *body) {
+    const char *p = strstr(body, "\"messages\"");
+    if (!p) return 0;
+    p += 10;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ':') p++;
+    return (*p == '[');
+}
+
+// Check if messages array has more than just one user message
+// (i.e., has system, assistant, or tool messages — indicating a stateless client)
+static int is_multi_role_messages(const char *body) {
+    // Quick check: if we see "role":"system" or "role":"assistant" or "role":"tool"
+    return (strstr(body, "\"system\"") != NULL ||
+            strstr(body, "\"assistant\"") != NULL ||
+            strstr(body, "\"tool\"") != NULL);
+}
+
 // Tokenize a user turn (system prompt already cached in KV).
 // Only encodes: <|im_start|>user\n{content}<|im_end|>\n<|im_start|>assistant\n
 static PromptTokens *tokenize_user_turn(const char *user_content) {
@@ -6189,53 +6900,83 @@ static void serve_loop(
             }
             body += 4;
 
+            // Make a copy of body for full messages parsing (extract_last_content mutates)
+            char *body_copy = strdup(body);
+
             // Extract session_id and max_tokens BEFORE content extraction
-            // (extract_last_content mutates the body buffer in place)
             int max_gen = extract_max_tokens(body, 8192);
             if (max_gen > 32768) max_gen = 32768;
             char req_session_id[64] = {0};
             int has_session = extract_session_id(body, req_session_id, sizeof(req_session_id));
 
-            // Extract user content from messages (mutates body — must be last)
-            char *content = extract_last_content(body);
-            if (!content || strlen(content) == 0) {
-                http_write_str(client_fd,
-                    "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
-                    "{\"error\":\"no content in messages\"}\n");
-                free(reqbuf); close(client_fd); continue;
-            }
-            int is_continuation = (has_session &&
-                                   active_session_id[0] != '\0' &&
-                                   strcmp(req_session_id, active_session_id) == 0);
-
-            // Session persistence is handled by the client (chat.m)
+            // Detect whether this is a full-messages request (OpenCode/stateless client)
+            // or a simple single-content request (chat.m with session management)
+            int use_full_messages = has_messages_array(body_copy) && is_multi_role_messages(body_copy);
+            // Also check for tools array — presence indicates OpenCode-style request
+            int has_tools = (strstr(body_copy, "\"tools\"") != NULL);
+            if (has_tools) use_full_messages = 1;
 
             char request_id[64];
             snprintf(request_id, sizeof(request_id), "chatcmpl-%llu", ++req_counter);
 
-            fprintf(stderr, "[serve] %s content=%zu chars, max_tokens=%d, session=%s%s\n",
-                    request_id, strlen(content), max_gen,
-                    has_session ? req_session_id : "(none)",
-                    is_continuation ? " [CONTINUE]" : " [NEW]");
+            PromptTokens *pt = NULL;
+            int is_continuation = 0;
+            char *chatml_prompt = NULL;  // only set in full-messages mode
 
-            // ---- Tokenize ----
-            // Continuation: prefix with <|im_end|>\n to close prior assistant turn
-            // New session: just the user turn (system prompt restored from snapshot)
-            PromptTokens *pt;
-            if (is_continuation) {
-                pt = tokenize_continuation_turn(content);
+            if (use_full_messages) {
+                // ---- Full messages mode (OpenCode / stateless API clients) ----
+                // Parse the complete messages array and build ChatML prompt
+                ParsedMessages parsed = parse_messages_array(body_copy);
+                char *tools_block = has_tools ? extract_tools_for_prompt(body_copy) : NULL;
+                chatml_prompt = build_chatml_prompt(&parsed, tools_block);
+                free(tools_block);
+                free_parsed_messages(&parsed);
+
+                fprintf(stderr, "[serve] %s FULL_MESSAGES mode, %d chars ChatML, max_tokens=%d, tools=%s\n",
+                        request_id, (int)strlen(chatml_prompt), max_gen,
+                        has_tools ? "yes" : "no");
+
+                // Tokenize the full ChatML prompt
+                pt = tokenize_raw_chatml(chatml_prompt);
+
+                // Full messages mode always resets state (no session continuation)
+                is_continuation = 0;
             } else {
-                pt = tokenize_user_turn(content);
+                // ---- Legacy mode (chat.m with session_id continuation) ----
+                char *content = extract_last_content(body);
+                if (!content || strlen(content) == 0) {
+                    http_write_str(client_fd,
+                        "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+                        "{\"error\":\"no content in messages\"}\n");
+                    free(body_copy); free(reqbuf); close(client_fd); continue;
+                }
+                is_continuation = (has_session &&
+                                   active_session_id[0] != '\0' &&
+                                   strcmp(req_session_id, active_session_id) == 0);
+
+                fprintf(stderr, "[serve] %s content=%zu chars, max_tokens=%d, session=%s%s\n",
+                        request_id, strlen(content), max_gen,
+                        has_session ? req_session_id : "(none)",
+                        is_continuation ? " [CONTINUE]" : " [NEW]");
+
+                if (is_continuation) {
+                    pt = tokenize_continuation_turn(content);
+                } else {
+                    pt = tokenize_user_turn(content);
+                }
             }
+            free(body_copy);
+
             if (!pt) {
                 http_write_str(client_fd,
                     "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
                     "{\"error\":\"tokenization failed\"}\n");
-                free(reqbuf); close(client_fd); continue;
+                free(chatml_prompt); free(reqbuf); close(client_fd); continue;
             }
 
             fprintf(stderr, "[serve] %s prompt=%d tokens%s\n", request_id, pt->count,
-                    is_continuation ? " (continuation — skipping snapshot restore)" : "");
+                    use_full_messages ? " (full messages)" :
+                    (is_continuation ? " (continuation — skipping snapshot restore)" : ""));
 
             int pos;
             if (is_continuation) {
@@ -6243,6 +6984,37 @@ static void serve_loop(
                 // The KV caches + linear attention state already contain the full
                 // conversation history. Just set pos to where we left off.
                 pos = session_pos;
+            } else if (use_full_messages) {
+                // ---- Full messages mode: reset all state to zero ----
+                // The ChatML prompt contains the complete conversation including system prompt,
+                // so we cannot use the system prompt snapshot. Reset everything.
+                for (int i = 0; i < NUM_LAYERS; i++) {
+                    if (kv_caches[i]) {
+                        kv_caches[i]->len = 0;
+                    }
+                    if (layer_states[i]) {
+                        LinearAttnState *s = (LinearAttnState *)layer_states[i];
+                        memset(s->conv_state, 0, conv_state_size);
+                        memset(s->ssm_state, 0, ssm_state_size);
+                    }
+                }
+                reset_delta_net_state();
+                // Also zero GPU KV mirrors
+                if (g_metal) {
+                    for (int i = 0; i < NUM_LAYERS; i++) {
+                        if (kv_caches[i]) {
+                            int fa_idx = (i + 1) / FULL_ATTN_INTERVAL - 1;
+                            if (fa_idx >= 0 && fa_idx < NUM_FULL_ATTN_LAYERS) {
+                                memset([g_metal->buf_kv_k[fa_idx] contents], 0,
+                                       sys_prompt_len * kv_dim * sizeof(float));
+                                memset([g_metal->buf_kv_v[fa_idx] contents], 0,
+                                       sys_prompt_len * kv_dim * sizeof(float));
+                            }
+                        }
+                    }
+                }
+                pos = 0;  // start from absolute zero
+                active_session_id[0] = '\0';  // no session tracking in full messages mode
             } else {
                 // ---- Restore state from system prompt snapshot ----
                 // Instead of resetting to zero, restore to the cached system prompt state.
@@ -6383,6 +7155,11 @@ static void serve_loop(
             char *gen_response = calloc(1, 256 * 1024);
             int gen_resp_len = 0;
 
+            // Tool call state machine (only active when tools are present)
+            ToolCallState tc_state;
+            int use_tool_detection = has_tools;
+            if (use_tool_detection) tool_call_state_init(&tc_state);
+
             for (int gen = 0; gen < max_gen; gen++) {
                 if (next_token == EOS_TOKEN_1 || next_token == EOS_TOKEN_2) {
                     // Feed EOS through the model so session state includes it
@@ -6421,9 +7198,21 @@ static void serve_loop(
                     gen_resp_len += tlen;
                     gen_response[gen_resp_len] = 0;
                 }
-                if (sse_send_delta(client_fd, request_id, tok_str) < 0) {
-                    fprintf(stderr, "[serve] %s client disconnected, stopping generation\n", request_id);
-                    break;
+
+                // Send token to client (with or without tool call detection)
+                int send_err = 0;
+                if (use_tool_detection && !in_think) {
+                    // Route through tool call state machine
+                    send_err = tool_call_process_token(client_fd, request_id, tok_str, &tc_state);
+                    if (send_err < 0) {
+                        fprintf(stderr, "[serve] %s client disconnected, stopping generation\n", request_id);
+                        break;
+                    }
+                } else {
+                    if (sse_send_delta(client_fd, request_id, tok_str) < 0) {
+                        fprintf(stderr, "[serve] %s client disconnected, stopping generation\n", request_id);
+                        break;
+                    }
                 }
                 gen_count++;
 
@@ -6452,7 +7241,13 @@ static void serve_loop(
                 next_token = cpu_argmax(logits, VOCAB_SIZE);
             }
 
-            sse_send_done(client_fd, request_id);
+            // Send appropriate finish message
+            if (use_tool_detection && tc_state.has_tool_calls) {
+                sse_send_done_tool_calls(client_fd, request_id);
+            } else {
+                sse_send_done(client_fd, request_id);
+            }
+            if (use_tool_detection) tool_call_state_free(&tc_state);
 
             // ---- Save session state ----
             free(gen_response);
@@ -6475,6 +7270,7 @@ static void serve_loop(
 
             free(pt->ids);
             free(pt);
+            if (chatml_prompt) free(chatml_prompt);
             free(reqbuf);
             close(client_fd);
             continue;

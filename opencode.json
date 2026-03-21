@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "flash-moe": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Flash-MoE (Qwen 3.5-397B)",
+      "options": {
+        "baseURL": "http://localhost:8000/v1",
+        "apiKey": "sk-local"
+      },
+      "models": {
+        "qwen3.5-397b-a17b": {
+          "name": "Qwen 3.5 397B-A17B (4-bit, local)",
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          }
+        }
+      }
+    }
+  },
+  "model": "flash-moe/qwen3.5-397b-a17b"
+}
