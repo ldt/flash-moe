@@ -102,10 +102,28 @@ metal_infer/
   vocab.bin            # Vocabulary for token decoding
   tokenizer.bin        # Pre-exported BPE tokenizer data
 
+docs/
+  OPENCODE_INTEGRATION.md  # OpenCode setup guide & API docs
+
+opencode.json          # OpenCode configuration (local provider)
 repack_experts.py      # 4-bit expert packing from safetensors
 progress.py            # Results visualization (Q2/Q4 tracks)
 results.tsv            # Experiment log (58 experiments)
 ```
+
+## OpenCode Integration
+
+Flash-MoE includes a full OpenAI-compatible API server that works with [OpenCode](https://opencode.ai/) and other AI coding agents.
+
+```bash
+# Start the server
+cd metal_infer && ./infer --serve 8000
+
+# Run OpenCode from the repo root
+opencode
+```
+
+The server handles full conversation history, tool calling (OpenAI format), and SSE streaming. See **[docs/OPENCODE_INTEGRATION.md](docs/OPENCODE_INTEGRATION.md)** for the complete setup guide, configuration options, and API reference.
 
 ## What We Tried (and What Worked)
 
