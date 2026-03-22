@@ -1,14 +1,16 @@
 /*
- * infer.m — Complete Qwen3.5-397B inference engine using Metal
+ * infer.m — Complete Qwen3.5 MoE inference engine using Metal
  *
- * Full forward pass: embedding -> 60 transformer layers -> norm -> lm_head -> sample
+ * Full forward pass: embedding -> transformer layers -> norm -> lm_head -> sample
  * Non-expert weights loaded from model_weights.bin (mmap'd at startup)
  * Expert weights loaded from packed_experts/ per layer per token (pread)
  *
- * Architecture: Qwen3.5-397B-A17B (MoE)
- *   - 60 layers: 45 linear attention (GatedDeltaNet) + 15 full attention
- *   - hidden_size=4096, head_dim=256, num_attention_heads=32, num_kv_heads=2
- *   - 512 experts/layer, 10 active (we use K=4 for speed)
+ * Model architecture configured via model_config.h (see configs/ directory):
+ *   make MODEL=qwen3.5-397b   — Qwen3.5-397B-A17B (default)
+ *   make MODEL=qwen3.5-122b   — Qwen3.5-122B-A10B
+ *
+ * Architecture: Qwen3.5 MoE family (hybrid GatedDeltaNet + full attention)
+ *   - Configurable layers, hidden dim, expert count (see configs/*.h)
  *   - Shared expert per layer (always active)
  *   - Linear attention: conv1d(kernel=4) + gated delta recurrence
  *   - Full attention: standard QKV + scaled dot product + RoPE
@@ -66,63 +68,17 @@
 #include <compression.h>
 
 // ============================================================================
-// Model constants
+// Model constants — loaded from model_config.h
+//
+// To switch models, rebuild with:
+//   make MODEL=qwen3.5-397b    (default, 397B params, 60 layers, 512 experts)
+//   make MODEL=qwen3.5-122b    (122B params, 48 layers, 256 experts)
+//
+// See configs/*.h for all available model configurations.
+// See configs/*.json for human-readable specs.
 // ============================================================================
 
-#define HIDDEN_DIM          4096
-#define NUM_LAYERS          60
-#define NUM_ATTN_HEADS      32
-#define NUM_KV_HEADS        2
-#define HEAD_DIM            256
-#define VOCAB_SIZE          248320
-#define RMS_NORM_EPS        1e-6f
-#define NUM_EXPERTS         512
-#define NUM_EXPERTS_PER_TOK 10
-#define MOE_INTERMEDIATE    1024
-#define SHARED_INTERMEDIATE 1024
-#define FULL_ATTN_INTERVAL  4
-#define GROUP_SIZE          64
-#define BITS                4
-
-// Linear attention (GatedDeltaNet) constants
-#define LINEAR_NUM_V_HEADS  64
-#define LINEAR_NUM_K_HEADS  16
-#define LINEAR_KEY_DIM      128   // head_k_dim
-#define LINEAR_VALUE_DIM    128   // head_v_dim
-#define LINEAR_TOTAL_KEY    (LINEAR_NUM_K_HEADS * LINEAR_KEY_DIM)   // 2048
-#define LINEAR_TOTAL_VALUE  (LINEAR_NUM_V_HEADS * LINEAR_VALUE_DIM) // 8192
-#define LINEAR_CONV_DIM     (LINEAR_TOTAL_KEY * 2 + LINEAR_TOTAL_VALUE) // 12288
-#define CONV_KERNEL_SIZE    4
-
-// Full attention constants
-#define ROPE_THETA          10000000.0f
-#define PARTIAL_ROTARY      0.25f
-#define ROTARY_DIM          (int)(HEAD_DIM * PARTIAL_ROTARY)  // 64
-
-// Expert packed binary layout (from existing code)
-#define EXPERT_SIZE         7077888
-
-// 2-bit expert layout (from repack_experts_2bit.py)
-#define EXPERT_SIZE_2BIT    3932160
-#define GATE_W_OFF_2  0
-#define GATE_S_OFF_2  1048576
-#define GATE_B_OFF_2  1179648
-#define UP_W_OFF_2    1310720
-#define UP_S_OFF_2    2359296
-#define UP_B_OFF_2    2490368
-#define DOWN_W_OFF_2  2621440
-#define DOWN_S_OFF_2  3670016
-#define DOWN_B_OFF_2  3801088
-
-// KV cache maximum context length
-#define MAX_SEQ_LEN 1048576  // 1M context — only 15 full-attn layers need KV cache, ~15GB at max
-#define GPU_KV_SEQ  8192     // GPU KV buffer pre-allocation (grows if exceeded, falls back to CPU attn)
-
-// Special tokens
-#define EOS_TOKEN_1         248046
-#define EOS_TOKEN_2         248044
-#define THINK_START_TOKEN   248068  // <think>
-#define THINK_END_TOKEN     248069  // </think>
+#include "model_config.h"
 
 #define MODEL_PATH_DEFAULT "/Users/danielwoods/.cache/huggingface/hub/models--mlx-community--Qwen3.5-397B-A17B-4bit/snapshots/39159bd8aa74f5c8446d2b2dc584f62bb51cb0d3"
 
@@ -953,7 +909,7 @@ typedef struct {
     id<MTLBuffer> buf_h_mid;        // [HIDDEN_DIM floats] residual+oproj result
     id<MTLBuffer> buf_sum_sq;       // [1 float] for RMS norm reduction
     // GPU attention buffers (for full attention layers)
-    #define NUM_FULL_ATTN_LAYERS 15
+    // NUM_FULL_ATTN_LAYERS defined in model_config.h
     id<MTLBuffer> buf_kv_k[NUM_FULL_ATTN_LAYERS];  // K cache per full-attn layer
     id<MTLBuffer> buf_kv_v[NUM_FULL_ATTN_LAYERS];  // V cache per full-attn layer
     id<MTLBuffer> buf_attn_q;       // [NUM_ATTN_HEADS * HEAD_DIM floats] all query heads
@@ -975,7 +931,7 @@ typedef struct {
     id<MTLComputePipelineState> compute_decay_beta; // g_decay and beta_gate for delta-net
     id<MTLComputePipelineState> gated_rms_norm;  // z-gated output normalization
     // Persistent GPU state buffers for linear attention layers
-    #define NUM_LINEAR_LAYERS 45
+    // NUM_LINEAR_LAYERS defined in model_config.h
     id<MTLBuffer> buf_delta_state[NUM_LINEAR_LAYERS];   // [64*128*128] float per layer
     id<MTLBuffer> buf_conv_state[NUM_LINEAR_LAYERS];     // [3*12288] float per layer
     // Scratch buffers for delta-net inputs/outputs
@@ -7444,7 +7400,7 @@ int main(int argc, char **argv) {
             g_expert_cache = expert_cache_new(g_metal->device, cache_entries);
         }
 
-        printf("=== Qwen3.5-397B-A17B Metal Inference Engine ===\n");
+        printf("=== %s Metal Inference Engine ===\n", MODEL_NAME);
         printf("Model:    %s\n", model_path);
         printf("Weights:  %s\n", weights_path);
         printf("Manifest: %s\n", manifest_path);

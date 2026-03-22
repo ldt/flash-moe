@@ -1,0 +1,56 @@
+{
+  "model_name": "Qwen3.5-397B-A17B",
+  "description": "397B total params, 17B active. 60 layers, hidden_dim=4096, 512 experts.",
+  "total_params_b": 397,
+  "active_params_b": 17,
+
+  "architecture": {
+    "hidden_dim": 4096,
+    "num_layers": 60,
+    "vocab_size": 248320,
+    "rms_norm_eps": 1e-6,
+    "max_seq_len": 1048576
+  },
+
+  "moe": {
+    "num_experts": 512,
+    "num_experts_per_tok": 10,
+    "moe_intermediate": 1024,
+    "shared_intermediate": 1024
+  },
+
+  "full_attention": {
+    "num_attn_heads": 32,
+    "num_kv_heads": 2,
+    "head_dim": 256,
+    "full_attn_interval": 4,
+    "num_full_attn_layers": 15,
+    "rope_theta": 10000000.0,
+    "partial_rotary": 0.25
+  },
+
+  "linear_attention": {
+    "num_v_heads": 64,
+    "num_k_heads": 16,
+    "key_dim": 128,
+    "value_dim": 128,
+    "conv_kernel_size": 4,
+    "num_linear_layers": 45
+  },
+
+  "quantization": {
+    "group_size": 64,
+    "bits": 4,
+    "expert_size_4bit": 7077888,
+    "expert_size_2bit": 3932160,
+    "total_disk_4bit_gb": 209,
+    "total_disk_2bit_gb": 120
+  },
+
+  "special_tokens": {
+    "eos_token_1": 248046,
+    "eos_token_2": 248044,
+    "think_start": 248068,
+    "think_end": 248069
+  }
+}

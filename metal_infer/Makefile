@@ -1,5 +1,9 @@
 # Makefile for metal_infer — Pure C/Metal MoE inference engine
 #
+# Model selection (configs/ directory):
+#   make MODEL=qwen3.5-397b   — Qwen3.5-397B-A17B (default)
+#   make MODEL=qwen3.5-122b   — Qwen3.5-122B-A10B
+#
 # Targets:
 #   make          — build metal_infer binary
 #   make run      — single expert forward pass
@@ -7,8 +11,8 @@
 #   make bench    — benchmark single expert (10 iterations)
 #   make moe      — full MoE forward pass (K experts, single layer)
 #   make moebench — benchmark MoE (10 iterations)
-#   make full     — full 60-layer MoE forward pass (K=4)
-#   make fullbench — benchmark full 60-layer forward (3 iterations)
+#   make full     — full N-layer MoE forward pass (K=4)
+#   make fullbench — benchmark full N-layer forward (3 iterations)
 #   make chat     — build interactive chat TUI
 #   make clean    — remove build artifacts
 #
@@ -19,6 +23,14 @@ CC = clang
 CFLAGS = -O2 -Wall -Wextra -fobjc-arc -DACCELERATE_NEW_LAPACK
 FRAMEWORKS = -framework Metal -framework Foundation -framework Accelerate
 LDFLAGS = -lpthread -lcompression
+
+# Model selection: make MODEL=qwen3.5-397b (default) or make MODEL=qwen3.5-122b
+MODEL ?= qwen3.5-397b
+ifeq ($(MODEL),qwen3.5-122b)
+  MODEL_FLAG = -DMODEL_QWEN3_5_122B
+else
+  MODEL_FLAG = -DMODEL_QWEN3_5_397B
+endif
 
 TARGET = metal_infer
 MAIN_SRC = main.m
@@ -55,9 +67,9 @@ $(SHADER_AIR): $(SHADER_SRC)
 $(SHADER_LIB): $(SHADER_AIR)
 	$(METALLIB_TOOL) $(SHADER_AIR) -o $(SHADER_LIB)
 
-# Build the inference engine
-$(INFER_TARGET): $(INFER_SRC)
-	$(CC) $(CFLAGS) $(FRAMEWORKS) $(LDFLAGS) $(INFER_SRC) -o $(INFER_TARGET)
+# Build the inference engine (model selected via MODEL= variable)
+$(INFER_TARGET): $(INFER_SRC) model_config.h configs/$(MODEL).h
+	$(CC) $(CFLAGS) $(MODEL_FLAG) $(FRAMEWORKS) $(LDFLAGS) $(INFER_SRC) -o $(INFER_TARGET)
 
 # Build the chat client (thin HTTP/SSE client + linenoise line editor)
 $(CHAT_TARGET): $(CHAT_SRC) linenoise.c linenoise.h
