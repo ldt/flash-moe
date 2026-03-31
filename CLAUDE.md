@@ -68,9 +68,13 @@ On Apple Silicon, SSD DMA and GPU compute share the same memory controller and c
 
 ## Quick Start
 
+See [INSTALL.md](INSTALL.md) for the full setup guide. Python scripts use [uv](https://docs.astral.sh/uv/) — run them with `uv run` (no virtualenv needed).
+
 ```bash
+# Build
 cd metal_infer
 make
+
 # 4-bit inference (needs packed_experts/ directory)
 ./infer --prompt "Explain quantum computing" --tokens 100
 
@@ -94,16 +98,19 @@ metal_infer/
   tokenizer.h          # C BPE tokenizer (single-header, 449 lines)
   main.m               # MoE-only benchmark
   Makefile             # Build system
-  extract_weights.py   # Creates model_weights.bin from safetensors
-  repack_experts_2bit.py  # 4-bit → 2-bit expert requantization
-  train_predictor.py   # Expert routing prediction analysis
+  extract_weights.py   # Creates model_weights.bin from safetensors (uv run)
+  export_vocab.py      # Creates vocab.bin in format expected by infer.m (uv run)
+  export_tokenizer.py  # Creates tokenizer.bin (BPE format for tokenizer.h) (uv run)
+  repack_experts_2bit.py  # 4-bit → 2-bit expert requantization (uv run)
+  train_predictor.py   # Expert routing prediction analysis (uv run)
   model_weights.bin    # Non-expert weights (5.5GB, mmap'd)
   model_weights.json   # Tensor manifest
-  vocab.bin            # Vocabulary for token decoding
+  vocab.bin            # Vocabulary for token decoding (simple format)
   tokenizer.bin        # Pre-exported BPE tokenizer data
 
-repack_experts.py      # 4-bit expert packing from safetensors
-progress.py            # Results visualization (Q2/Q4 tracks)
+generate_expert_index.py  # Creates expert_index.json from safetensors headers (uv run)
+repack_experts.py      # 4-bit expert packing from safetensors (uv run)
+progress.py            # Results visualization (Q2/Q4 tracks) (uv run)
 results.tsv            # Experiment log (58 experiments)
 ```
 
