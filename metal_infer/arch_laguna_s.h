@@ -46,7 +46,9 @@
 
 #define HIDDEN_DIM          3072
 #define NUM_LAYERS          48
-#define NUM_ATTN_HEADS      72   // SWA layers; global layers use 48 (UNSUPPORTED)
+#define NUM_ATTN_HEADS      72   // MAX over layers: sliding layers use 72
+#define ARCH_GLOBAL_NUM_HEADS 48 // global layers use 48
+#define ARCH_LAYER_NUM_HEADS(i) (ARCH_LAYER_IS_GLOBAL(i) ? ARCH_GLOBAL_NUM_HEADS : NUM_ATTN_HEADS)
 #define NUM_KV_HEADS        8
 #define HEAD_DIM            128
 #define VOCAB_SIZE          100352
@@ -55,7 +57,8 @@
 #define NUM_EXPERTS_PER_TOK 10
 #define MOE_INTERMEDIATE    1024
 #define SHARED_INTERMEDIATE 1024
-#define FULL_ATTN_INTERVAL  4     // every 4th layer is global, the rest are SWA
+#define FULL_ATTN_INTERVAL  4     // one global layer per group of four
+#define ARCH_GLOBAL_PHASE   0     // ...and it is the FIRST: layer 0 is global
 #define GROUP_SIZE          64
 #define BITS                4
 
@@ -81,9 +84,14 @@
 // RoPE. Global layers use YaRN (factor 128 over an 8192-token base window,
 // which is exactly the 1M advertised context). Sliding-window layers only
 // ever look back 512 tokens, so they use unscaled rope.
-#define ROPE_THETA            10000.0f   // SWA layers; global layers use 500000 (UNSUPPORTED)
-#define PARTIAL_ROTARY        1.0f   // SWA layers; global layers use 0.5 (UNSUPPORTED)
-#define ROTARY_DIM            128  // HEAD_DIM * PARTIAL_ROTARY, as an integer literal
+// Sliding layers: theta 10000, unscaled, partial_rotary 1.0 -> 128 dims.
+// Global layers:  theta 500000, YaRN x128, partial_rotary 0.5 -> 64 dims.
+#define ROPE_THETA            10000.0f    // sliding layers (rope table 0)
+#define ARCH_ROPE_THETA_GLOBAL 500000.0f  // global layers  (rope table 1)
+#define PARTIAL_ROTARY        1.0f
+#define ROTARY_DIM            128   // MAX over layers (sliding); global use 64
+#define ARCH_GLOBAL_ROTARY_DIM 64
+#define ARCH_LAYER_ROTARY_DIM(i) (ARCH_LAYER_IS_GLOBAL(i) ? ARCH_GLOBAL_ROTARY_DIM : ROTARY_DIM)
 #define ARCH_ROPE_SCALING     ARCH_ROPE_YARN
 #define ARCH_ROPE_YARN_FACTOR 128.0f
 #define ARCH_ROPE_YARN_ATTN_FACTOR 1.4852030263919618f
@@ -96,6 +104,16 @@
 
 // Router: sigmoid per expert (not softmax), then top-k, then renormalize.
 #define ARCH_ROUTER_SIGMOID 1
+
+// Layer 0 is a dense MLP (config: mlp_only_layers=[0], intermediate_size).
+// Only layers 1..47 route to experts.
+#define ARCH_LAYER_IS_MOE(i)    ((i) != 0)
+#define ARCH_DENSE_INTERMEDIATE 12288
+
+// Routed expert output is scaled before the shared expert is added, and the
+// shared expert is added ungated (Qwen applies a sigmoid gate to it).
+#define ARCH_ROUTED_SCALING     2.5f
+#define ARCH_SHARED_EXPERT_GATED 0
 
 // Packed expert layout, 4-bit:
 //   gate/up: [768, 4096] -> 768*4096/2      = 1572864 B each

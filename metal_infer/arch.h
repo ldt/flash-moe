@@ -78,9 +78,49 @@
   #define ARCH_ATTN_SLOT_LAYER(s) (s)
 #endif
 
-#define ARCH_LAYER_IS_GLOBAL_DEFAULT(i) (((i) + 1) % FULL_ATTN_INTERVAL == 0)
+// Which layers are global attention. Models differ in the phase of the
+// pattern: Qwen3.5 puts the global layer last in each group of four
+// ((i+1) % 4 == 0), Laguna S puts it first (i % 4 == 0, so layer 0 is
+// global). ARCH_GLOBAL_PHASE is that offset.
+#ifndef ARCH_GLOBAL_PHASE
+  #define ARCH_GLOBAL_PHASE (FULL_ATTN_INTERVAL - 1)
+#endif
 #ifndef ARCH_LAYER_IS_GLOBAL
-  #define ARCH_LAYER_IS_GLOBAL(i) ARCH_LAYER_IS_GLOBAL_DEFAULT(i)
+  #define ARCH_LAYER_IS_GLOBAL(i) ((i) % FULL_ATTN_INTERVAL == ARCH_GLOBAL_PHASE)
+#endif
+
+// Query-head count can vary per layer (Laguna S: 48 on global layers, 72 on
+// sliding ones). NUM_ATTN_HEADS is the MAXIMUM over layers — every buffer is
+// sized from it — while ARCH_LAYER_NUM_HEADS(i) is what a given layer uses.
+#ifndef ARCH_LAYER_NUM_HEADS
+  #define ARCH_LAYER_NUM_HEADS(i) NUM_ATTN_HEADS
+#endif
+
+// Rotary width can also vary per layer (partial_rotary_factor differs between
+// the global and sliding rope configurations). ROTARY_DIM is the maximum.
+#ifndef ARCH_LAYER_ROTARY_DIM
+  #define ARCH_LAYER_ROTARY_DIM(i) ROTARY_DIM
+#endif
+
+// Most models route every layer to experts; Laguna S makes layer 0 a plain
+// dense MLP (config: mlp_only_layers). ARCH_DENSE_INTERMEDIATE is that
+// layer's FFN width.
+#ifndef ARCH_LAYER_IS_MOE
+  #define ARCH_LAYER_IS_MOE(i) (1)
+#endif
+#ifndef ARCH_DENSE_INTERMEDIATE
+  #define ARCH_DENSE_INTERMEDIATE SHARED_INTERMEDIATE
+#endif
+
+// Routed-expert output scaling, applied before the shared expert is added.
+#ifndef ARCH_ROUTED_SCALING
+  #define ARCH_ROUTED_SCALING 1.0f
+#endif
+
+// Whether the shared expert is gated by its own sigmoid projection (Qwen) or
+// simply added (Laguna S).
+#ifndef ARCH_SHARED_EXPERT_GATED
+  #define ARCH_SHARED_EXPERT_GATED 1
 #endif
 
 // Number of KV caches to allocate, and how deep each one has to be. A

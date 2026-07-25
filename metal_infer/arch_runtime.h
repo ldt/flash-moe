@@ -24,7 +24,21 @@ static void cpu_softmax(float *x, int dim);
 
 // ROTARY_DIM is an integer literal in every profile, so this is a valid
 // constant expression for the table sizes below.
+// Defaults for models with a single rope configuration.
+#ifndef ARCH_ROPE_THETA_GLOBAL
+  #define ARCH_ROPE_THETA_GLOBAL ROPE_THETA
+#endif
+#ifndef ARCH_GLOBAL_ROTARY_DIM
+  #define ARCH_GLOBAL_ROTARY_DIM ROTARY_DIM
+#endif
+
+// ROTARY_DIM is the maximum over layers, so it sizes both tables.
 #define ARCH_ROPE_HALF (ROTARY_DIM / 2)
+
+// Per-table geometry: table 0 is the sliding/default configuration,
+// table 1 the global one (which is the only one that may carry scaling).
+#define ARCH_ROPE_TABLE_THETA(t) ((t) ? ARCH_ROPE_THETA_GLOBAL : ROPE_THETA)
+#define ARCH_ROPE_TABLE_DIM(t)   ((t) ? ARCH_GLOBAL_ROTARY_DIM : ROTARY_DIM)
 
 static float g_rope_freq[2][ARCH_ROPE_HALF];
 static float g_rope_mscale[2] = { 1.0f, 1.0f };
@@ -33,47 +47,54 @@ static int   g_rope_tables_ready = 0;
 #if ARCH_ROPE_SCALING == ARCH_ROPE_YARN
 // Dimension at which a rotation of `num_rot` cycles happens over the original
 // context window — the YaRN correction range, same formula as the reference
-// implementation.
+// implementation. Uses the global table's geometry, the only one scaled.
 static float arch_yarn_correction_dim(float num_rot) {
-    return ((float)ROTARY_DIM *
+    return ((float)ARCH_GLOBAL_ROTARY_DIM *
             logf((float)ARCH_ROPE_ORIG_CTX / (num_rot * 2.0f * 3.14159265358979323846f))) /
-           (2.0f * logf(ROPE_THETA));
+           (2.0f * logf(ARCH_ROPE_THETA_GLOBAL));
 }
 #endif
 
 static void arch_rope_init(void) {
     if (g_rope_tables_ready) return;
 
-    for (int i = 0; i < ARCH_ROPE_HALF; i++) {
-        g_rope_freq[0][i] = 1.0f / powf(ROPE_THETA, (float)(2 * i) / (float)ROTARY_DIM);
-        g_rope_freq[1][i] = g_rope_freq[0][i];
+    for (int t = 0; t < 2; t++) {
+        float theta = ARCH_ROPE_TABLE_THETA(t);
+        int dim = ARCH_ROPE_TABLE_DIM(t);
+        int half = dim / 2;
+        for (int i = 0; i < half; i++) {
+            g_rope_freq[t][i] = 1.0f / powf(theta, (float)(2 * i) / (float)dim);
+        }
+        for (int i = half; i < ARCH_ROPE_HALF; i++) g_rope_freq[t][i] = 0.0f;
+        g_rope_mscale[t] = 1.0f;
     }
-    g_rope_mscale[0] = 1.0f;
-    g_rope_mscale[1] = 1.0f;
 
 #if ARCH_ROPE_SCALING == ARCH_ROPE_YARN
-    float low  = floorf(arch_yarn_correction_dim(ARCH_ROPE_BETA_FAST));
-    float high = ceilf(arch_yarn_correction_dim(ARCH_ROPE_BETA_SLOW));
-    if (low < 0.0f) low = 0.0f;
-    if (high > (float)(ROTARY_DIM - 1)) high = (float)(ROTARY_DIM - 1);
-    // Guard against a degenerate range (identical bounds would divide by zero).
-    float span = high - low;
-    if (span < 1e-3f) span = 1e-3f;
+    {
+        int half = ARCH_GLOBAL_ROTARY_DIM / 2;
+        float low  = floorf(arch_yarn_correction_dim(ARCH_ROPE_BETA_FAST));
+        float high = ceilf(arch_yarn_correction_dim(ARCH_ROPE_BETA_SLOW));
+        if (low < 0.0f) low = 0.0f;
+        if (high > (float)(ARCH_GLOBAL_ROTARY_DIM - 1)) high = (float)(ARCH_GLOBAL_ROTARY_DIM - 1);
+        // Guard against a degenerate range (identical bounds would divide by zero).
+        float span = high - low;
+        if (span < 1e-3f) span = 1e-3f;
 
-    for (int i = 0; i < ARCH_ROPE_HALF; i++) {
-        float extrapolation = g_rope_freq[0][i];
-        float interpolation = extrapolation / ARCH_ROPE_YARN_FACTOR;
+        for (int i = 0; i < half; i++) {
+            float extrapolation = g_rope_freq[1][i];
+            float interpolation = extrapolation / ARCH_ROPE_YARN_FACTOR;
 
-        float ramp = ((float)i - low) / span;
-        if (ramp < 0.0f) ramp = 0.0f;
-        if (ramp > 1.0f) ramp = 1.0f;
-        // ramp 0 near the high-frequency dims -> keep extrapolation there.
-        float extrapolation_factor = 1.0f - ramp;
+            float ramp = ((float)i - low) / span;
+            if (ramp < 0.0f) ramp = 0.0f;
+            if (ramp > 1.0f) ramp = 1.0f;
+            // ramp 0 near the high-frequency dims -> keep extrapolation there.
+            float extrapolation_factor = 1.0f - ramp;
 
-        g_rope_freq[1][i] = interpolation * (1.0f - extrapolation_factor) +
-                            extrapolation * extrapolation_factor;
+            g_rope_freq[1][i] = interpolation * (1.0f - extrapolation_factor) +
+                                extrapolation * extrapolation_factor;
+        }
+        g_rope_mscale[1] = ARCH_ROPE_YARN_ATTN_FACTOR;
     }
-    g_rope_mscale[1] = ARCH_ROPE_YARN_ATTN_FACTOR;
 #endif
 
     g_rope_tables_ready = 1;
