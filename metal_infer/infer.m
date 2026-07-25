@@ -889,7 +889,7 @@ typedef struct {
     // Each expert k uses slot [k].
     // Double-buffered: set A (data) for GPU compute, set B (data_B) for background pread.
     // Gate/up/act/out only need one set (GPU uses them after pread completes).
-    #define MAX_K 8
+    #define MAX_K 10   // Laguna S routes top-10; Qwen3.5 runs at K<=8
     id<MTLBuffer> buf_multi_expert_data[MAX_K];   // [EXPERT_SIZE bytes] each — buffer set A
     id<MTLBuffer> buf_multi_expert_data_B[MAX_K]; // [EXPERT_SIZE bytes] each — buffer set B (prefetch)
     id<MTLBuffer> buf_multi_expert_gate[MAX_K];   // [MOE_INTERMEDIATE floats]
@@ -1125,7 +1125,7 @@ static MetalCtx *metal_setup(void) {
     // CMD3 GPU-side combine buffers
     ctx->buf_moe_hidden    = [ctx->device newBufferWithLength:HIDDEN_DIM * sizeof(float)
                                                        options:MTLResourceStorageModeShared];
-    ctx->buf_combine_params = [ctx->device newBufferWithLength:10 * sizeof(float)
+    ctx->buf_combine_params = [ctx->device newBufferWithLength:12 * sizeof(float)
                                                         options:MTLResourceStorageModeShared];
     ctx->buf_cmd3_sum_sq    = [ctx->device newBufferWithLength:sizeof(float)
                                                         options:MTLResourceStorageModeShared];
@@ -5580,13 +5580,13 @@ static void fused_layer_forward(
             // Prepare combine params: expert_weights[0..K-1] + shared_gate_score
             {
                 float *params = (float *)[g_metal->buf_combine_params contents];
-                // Zero all 10 slots first (unused experts get weight=0)
-                memset(params, 0, 10 * sizeof(float));
+                // Zero all slots first (unused experts get weight=0)
+                memset(params, 0, 12 * sizeof(float));
                 for (int k = 0; k < actual_K; k++) {
                     params[k] = valid[k] ? expert_weights[k] : 0.0f;
                 }
-                params[8] = shared_gate_score;
-                params[9] = ARCH_SHARED_EXPERT_GATED ? 1.0f : 0.0f;
+                params[10] = shared_gate_score;
+                params[11] = ARCH_SHARED_EXPERT_GATED ? 1.0f : 0.0f;
             }
 
             // Enc C1: moe_combine_residual
@@ -5600,11 +5600,11 @@ static void fused_layer_forward(
                 for (int k = 0; k < MAX_K; k++) {
                     [enc setBuffer:g_metal->buf_multi_expert_out[k] offset:0 atIndex:(3 + k)];
                 }
-                [enc setBuffer:g_metal->buf_combine_params offset:0 atIndex:11]; // params
+                [enc setBuffer:g_metal->buf_combine_params offset:0 atIndex:16]; // params
                 uint32_t dim = HIDDEN_DIM;
                 uint32_t k_val = (uint32_t)actual_K;
-                [enc setBytes:&dim   length:4 atIndex:12];
-                [enc setBytes:&k_val length:4 atIndex:13];
+                [enc setBytes:&dim   length:4 atIndex:17];
+                [enc setBytes:&k_val length:4 atIndex:18];
                 uint32_t tgs = (dim + 255) / 256;
                 [enc dispatchThreadgroups:MTLSizeMake(tgs, 1, 1)
                     threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];

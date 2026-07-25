@@ -1311,30 +1311,31 @@ kernel void moe_combine_residual(
     device const float* h_mid       [[buffer(0)]],   // [dim]
     device const float* shared_out  [[buffer(1)]],   // [dim]
     device float*       hidden_out  [[buffer(2)]],   // [dim] output
-    device const float* expert_out0 [[buffer(3)]],   // [dim] expert 0
-    device const float* expert_out1 [[buffer(4)]],   // [dim] expert 1
-    device const float* expert_out2 [[buffer(5)]],   // [dim] expert 2
-    device const float* expert_out3 [[buffer(6)]],   // [dim] expert 3
-    device const float* expert_out4 [[buffer(7)]],   // [dim] expert 4
-    device const float* expert_out5 [[buffer(8)]],   // [dim] expert 5
-    device const float* expert_out6 [[buffer(9)]],   // [dim] expert 6
-    device const float* expert_out7 [[buffer(10)]],  // [dim] expert 7
-    device const float* params      [[buffer(11)]],  // [10]: weights[0..7], shared_gate_score, shared_gate_mode
-    constant uint&      dim         [[buffer(12)]],
-    constant uint&      K           [[buffer(13)]],
+    device const float* expert_out0 [[buffer(3)]],
+    device const float* expert_out1 [[buffer(4)]],
+    device const float* expert_out2 [[buffer(5)]],
+    device const float* expert_out3 [[buffer(6)]],
+    device const float* expert_out4 [[buffer(7)]],
+    device const float* expert_out5 [[buffer(8)]],
+    device const float* expert_out6 [[buffer(9)]],
+    device const float* expert_out7 [[buffer(10)]],
+    device const float* expert_out8 [[buffer(11)]],
+    device const float* expert_out9 [[buffer(12)]],
+    device const float* params      [[buffer(16)]],  // [12]: weights[0..9], shared_gate_score, shared_gate_mode
+    constant uint&      dim         [[buffer(17)]],
+    constant uint&      K           [[buffer(18)]],
     uint tid [[thread_position_in_grid]]
 ) {
     if (tid >= dim) return;
 
-    // Read expert weights and shared gate from params buffer.
-    // params[9] selects how the shared expert is combined: non-zero means it
+    // params[11] selects how the shared expert is combined: non-zero means it
     // carries a sigmoid gate (Qwen3.5), zero means it is added ungated
     // (Laguna S).
-    float shared_gate = (params[9] != 0.0f) ? (1.0f / (1.0f + exp(-params[8]))) : 1.0f;
+    float shared_gate = (params[11] != 0.0f) ? (1.0f / (1.0f + exp(-params[10]))) : 1.0f;
 
-    // Weighted sum of expert outputs
+    // Weighted sum of expert outputs, unrolled for MAX_K=10 with a branch on K
+    // so unused (unbound-but-valid) buffers are never read.
     float moe = 0.0f;
-    // Unrolled for MAX_K=8 with branch on K to avoid reading invalid buffers
     if (K > 0) moe += params[0] * expert_out0[tid];
     if (K > 1) moe += params[1] * expert_out1[tid];
     if (K > 2) moe += params[2] * expert_out2[tid];
@@ -1343,6 +1344,8 @@ kernel void moe_combine_residual(
     if (K > 5) moe += params[5] * expert_out5[tid];
     if (K > 6) moe += params[6] * expert_out6[tid];
     if (K > 7) moe += params[7] * expert_out7[tid];
+    if (K > 8) moe += params[8] * expert_out8[tid];
+    if (K > 9) moe += params[9] * expert_out9[tid];
 
     hidden_out[tid] = h_mid[tid] + moe + shared_gate * shared_out[tid];
 }
