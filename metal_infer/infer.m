@@ -114,6 +114,7 @@ typedef struct {
 
 static LayerTimingAccum g_timing = {0};
 static int g_timing_enabled = 0;
+static int g_debug_layers = 0;  // FLASH_MOE_DEBUG_LAYERS=1
 
 // Temporal prediction pipeline counters (declared early for timing_print access)
 static int g_pred_enabled = 0;
@@ -3792,12 +3793,43 @@ static void build_layer_cache(WeightFile *wf) {
         }
 
         // MoE weights (same for all layers)
-        snprintf(name, sizeof(name), "model.layers.%d.mlp.gate.weight", i);
-        lc->gate_w = get_tensor_ptr(wf, name);
-        snprintf(name, sizeof(name), "model.layers.%d.mlp.gate.scales", i);
-        lc->gate_s = get_tensor_ptr(wf, name);
-        snprintf(name, sizeof(name), "model.layers.%d.mlp.gate.biases", i);
-        lc->gate_b = get_tensor_ptr(wf, name);
+        if (!ARCH_LAYER_IS_MOE(i)) {
+            // Dense FFN layer: no router, no experts. Its gate/up/down
+            // projections reuse the shared-expert slots, at the (wider)
+            // ARCH_DENSE_INTERMEDIATE width.
+            static const char *dense_parts[3] = { "gate_proj", "up_proj", "down_proj" };
+            uint32_t **dw[3] = { &lc->sg_w, &lc->su_w, &lc->sd_w };
+            uint16_t **ds[3] = { &lc->sg_s, &lc->su_s, &lc->sd_s };
+            uint16_t **db[3] = { &lc->sg_b, &lc->su_b, &lc->sd_b };
+            for (int d = 0; d < 3; d++) {
+                snprintf(name, sizeof(name), "model.layers.%d.mlp.%s.weight", i, dense_parts[d]);
+                *dw[d] = get_tensor_ptr(wf, name);
+                snprintf(name, sizeof(name), "model.layers.%d.mlp.%s.scales", i, dense_parts[d]);
+                *ds[d] = get_tensor_ptr(wf, name);
+                snprintf(name, sizeof(name), "model.layers.%d.mlp.%s.biases", i, dense_parts[d]);
+                *db[d] = get_tensor_ptr(wf, name);
+            }
+            continue;
+        }
+
+        // Router projection. Naming differs: Qwen3.5 uses mlp.gate.*, Laguna S
+        // nests it as mlp.gate.proj.*.
+        snprintf(name, sizeof(name), "model.layers.%d.mlp.gate.proj.weight", i);
+        if (get_tensor_ptr(wf, name)) {
+            lc->gate_w = get_tensor_ptr(wf, name);
+            snprintf(name, sizeof(name), "model.layers.%d.mlp.gate.proj.scales", i);
+            lc->gate_s = get_tensor_ptr(wf, name);
+            snprintf(name, sizeof(name), "model.layers.%d.mlp.gate.proj.biases", i);
+            lc->gate_b = get_tensor_ptr(wf, name);
+        }
+        if (!lc->gate_w) {
+            snprintf(name, sizeof(name), "model.layers.%d.mlp.gate.weight", i);
+            lc->gate_w = get_tensor_ptr(wf, name);
+            snprintf(name, sizeof(name), "model.layers.%d.mlp.gate.scales", i);
+            lc->gate_s = get_tensor_ptr(wf, name);
+            snprintf(name, sizeof(name), "model.layers.%d.mlp.gate.biases", i);
+            lc->gate_b = get_tensor_ptr(wf, name);
+        }
         snprintf(name, sizeof(name), "model.layers.%d.mlp.shared_expert.gate_proj.weight", i);
         lc->sg_w = get_tensor_ptr(wf, name);
         snprintf(name, sizeof(name), "model.layers.%d.mlp.shared_expert.gate_proj.scales", i);
@@ -3973,7 +4005,8 @@ static float *s_gate_scores = NULL; // [NUM_EXPERTS]
 static float *s_spec_gate_scores = NULL; // [NUM_EXPERTS] speculative routing scratch
 static int s_spec_indices[MAX_K];         // speculative routing predicted expert indices
 static int s_spec_count = 0;              // number of speculative predictions this layer
-static float *s_shared_gate = NULL; // [SHARED_INTERMEDIATE]
+static float *s_shared_gate = NULL;
+static float *s_dense_act = NULL;   // SwiGLU activations for dense FFN layers // [SHARED_INTERMEDIATE]
 static float *s_shared_up  = NULL;  // [SHARED_INTERMEDIATE]
 static float *s_moe_out   = NULL;   // [HIDDEN_DIM]
 static float *s_shared_out = NULL;  // [HIDDEN_DIM]
@@ -4003,8 +4036,12 @@ static void init_layer_scratch(void) {
     s_h_mid      = calloc(HIDDEN_DIM, sizeof(float));
     s_gate_scores = calloc(NUM_EXPERTS, sizeof(float));
     s_spec_gate_scores = calloc(NUM_EXPERTS, sizeof(float));
-    s_shared_gate = calloc(SHARED_INTERMEDIATE, sizeof(float));
-    s_shared_up  = calloc(SHARED_INTERMEDIATE, sizeof(float));
+    // Dense layers run a wider FFN through the same buffers.
+    #define ARCH_MAX_FFN_INTER (ARCH_DENSE_INTERMEDIATE > SHARED_INTERMEDIATE \
+                                ? ARCH_DENSE_INTERMEDIATE : SHARED_INTERMEDIATE)
+    s_shared_gate = calloc(ARCH_MAX_FFN_INTER, sizeof(float));
+    s_shared_up  = calloc(ARCH_MAX_FFN_INTER, sizeof(float));
+    s_dense_act  = calloc(ARCH_MAX_FFN_INTER, sizeof(float));
     s_moe_out    = calloc(HIDDEN_DIM, sizeof(float));
     s_shared_out = calloc(HIDDEN_DIM, sizeof(float));
     s_q_proj_out = calloc(NUM_ATTN_HEADS * HEAD_DIM * 2, sizeof(float));
@@ -4867,8 +4904,15 @@ static void fused_layer_forward(
     memset(shared_up, 0, SHARED_INTERMEDIATE * sizeof(float));
     float shared_gate_score = 0.0f;
 
+    // The shared-expert gate projection only exists on models that gate the
+    // shared expert (Qwen3.5 does, Laguna S adds it ungated). Requiring it
+    // unconditionally would silently disable routing on such models.
+    int have_shared_gate_w = (!ARCH_SHARED_EXPERT_GATED) || (seg_w && seg_s && seg_b);
     int have_moe_weights = (gate_w && gate_s && gate_b && sgw && sgs && sgb &&
-                            suw && sus && sub && seg_w && seg_s && seg_b);
+                            suw && sus && sub && have_shared_gate_w);
+    // Number of projections batched in CMD2: router, shared gate_proj,
+    // shared up_proj, and the shared-expert gate when the model has one.
+    const int num_moe_specs = ARCH_SHARED_EXPERT_GATED ? 4 : 3;
 
     // gpu_attn_fuse: attention dispatches fused into CMD2 (full-attn layers only).
     // Only enabled when seq_len >= 32 — below that, CPU attention is faster
@@ -5077,7 +5121,7 @@ static void fused_layer_forward(
             { seg_w,  seg_s,  seg_b,  &shared_gate_score,  1,                            HIDDEN_DIM, GROUP_SIZE, 3 },
         };
         // buf_input already contains h_post from Enc 4 output -- no memcpy needed
-        gpu_encode_batch_matvec(g_metal, cmd_fused, moe_specs, 4);
+        gpu_encode_batch_matvec(g_metal, cmd_fused, moe_specs, num_moe_specs);
 
         if (g_timing_enabled) { t1 = now_ms(); g_timing.cmd2_encode += t1 - t0; }
 
@@ -5087,7 +5131,7 @@ static void fused_layer_forward(
         [cmd_fused waitUntilCompleted];
 
         // Read back results
-        gpu_flush_batch_results(g_metal, moe_specs, 4);
+        gpu_flush_batch_results(g_metal, moe_specs, num_moe_specs);
         // Read h_mid from GPU buffer (needed for final combine)
         memcpy(h_mid, [g_metal->buf_h_mid contents], HIDDEN_DIM * sizeof(float));
         // Read h_post from buf_input (needed for expert input)
@@ -5125,9 +5169,54 @@ static void fused_layer_forward(
                 { suw,    sus,    sub,    shared_up,           (uint32_t)SHARED_INTERMEDIATE, HIDDEN_DIM, GROUP_SIZE, 2 },
                 { seg_w,  seg_s,  seg_b,  &shared_gate_score,  1,                            HIDDEN_DIM, GROUP_SIZE, 3 },
             };
-            fast_batch_matvec(h_post, HIDDEN_DIM, moe_specs, 4);
+            fast_batch_matvec(h_post, HIDDEN_DIM, moe_specs, num_moe_specs);
         }
         if (g_timing_enabled) { t1 = now_ms(); g_timing.cmd2_encode += t1 - t0; }
+    }
+
+    // Optional per-layer diagnostics: FLASH_MOE_DEBUG_LAYERS=1 prints the RMS
+    // of the hidden state after every layer, which localizes where a port
+    // goes numerically wrong.
+    if (g_debug_layers) {
+        double ss = 0.0; int nan_count = 0;
+        for (int i = 0; i < HIDDEN_DIM; i++) {
+            float v = hidden[i];
+            if (v != v) nan_count++;
+            ss += (double)v * (double)v;
+        }
+        fprintf(stderr, "[dbg] layer %2d %-8s heads=%2d rot=%3d win=%3d moe=%d  h_rms=%.5f%s\n",
+                layer_idx, ARCH_LAYER_IS_GLOBAL(layer_idx) ? "global" : "sliding",
+                nheads, rotary_dim, ARCH_LAYER_WINDOW(layer_idx),
+                ARCH_LAYER_IS_MOE(layer_idx),
+                sqrt(ss / HIDDEN_DIM), nan_count ? "  *** NaN ***" : "");
+    }
+
+    // ---- Dense FFN layers: no routing, no experts ----
+    // Some models keep the first block dense (Laguna S: mlp_only_layers=[0]).
+    // h_mid holds residual+o_proj and h_post the normalized FFN input, so the
+    // whole MoE pipeline below is replaced by one SwiGLU MLP. Nothing is
+    // deferred, which leaves the next layer on the ordinary CMD1 path.
+    if (!ARCH_LAYER_IS_MOE(layer_idx)) {
+        if (sgw && sgs && sgb && suw && sus && sub && sdw && sds && sdb) {
+            const uint32_t inter = ARCH_DENSE_INTERMEDIATE;
+            BatchMatvecSpec dense_specs[2] = {
+                { sgw, sgs, sgb, s_shared_gate, inter, HIDDEN_DIM, GROUP_SIZE, 0 },
+                { suw, sus, sub, s_shared_up,   inter, HIDDEN_DIM, GROUP_SIZE, 1 },
+            };
+            fast_batch_matvec(h_post, HIDDEN_DIM, dense_specs, 2);
+            cpu_swiglu(s_shared_gate, s_shared_up, s_dense_act, (int)inter);
+            fast_dequant_matvec(sdw, sds, sdb, s_dense_act, s_shared_out,
+                                HIDDEN_DIM, (int)inter, GROUP_SIZE);
+            for (int i = 0; i < HIDDEN_DIM; i++) hidden[i] = h_mid[i] + s_shared_out[i];
+        } else {
+            fprintf(stderr, "[arch] WARNING: layer %d is dense but its mlp.{gate,up,down}_proj "
+                            "weights are missing — the FFN is being skipped.\n", layer_idx);
+        }
+        if (g_timing_enabled) {
+            g_timing.count++;
+            g_timing.total += now_ms() - t_layer_start;
+        }
+        return;
     }
 
     // ---- Softmax + top-K (CPU) ----
@@ -5165,6 +5254,22 @@ static void fused_layer_forward(
     }
 
     if (g_timing_enabled) { t1 = now_ms(); g_timing.routing_cpu += t1 - t0; }
+
+    if (g_debug_layers && layer_idx <= 2) {
+        float smin = 1e30f, smax = -1e30f; int snan = 0;
+        for (int e = 0; e < NUM_EXPERTS; e++) {
+            float v = gate_scores[e];
+            if (v != v) snan++;
+            if (v < smin) smin = v;
+            if (v > smax) smax = v;
+        }
+        fprintf(stderr, "[dbg]   router L%d: scores[min=%.4f max=%.4f nan=%d] "
+                        "top: e%d w%.4f, e%d w%.4f, e%d w%.4f\n",
+                layer_idx, smin, smax, snan,
+                expert_indices[0], expert_weights[0],
+                expert_indices[1], expert_weights[1],
+                expert_indices[2], expert_weights[2]);
+    }
 
     // Log routing data for predictor training
     if (g_routing_log) {
@@ -6663,6 +6768,7 @@ static const char *get_default_model_path(void) {
 }
 
 int main(int argc, char **argv) {
+    g_debug_layers = (getenv("FLASH_MOE_DEBUG_LAYERS") != NULL);
     @autoreleasepool {
         const char *model_path = get_default_model_path();
         const char *weights_path = NULL;

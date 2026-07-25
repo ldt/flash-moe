@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["mlx", "numpy"]  # only needed when re-quantizing non-4-bit tensors
+# ///
 """
 extract_weights.py — Extract all non-expert weights from Qwen3.5-397B-A17B-4bit
 into a single binary file that the C inference engine can mmap.
@@ -156,6 +160,51 @@ def main():
 
     print(f"\nWriting {bin_path}...")
     t0 = time.time()
+    # ---- Re-quantization of non-4-bit tensors -------------------------------
+    requant_cache = {}
+    requant_bases = {}
+    src_cfg_path = os.path.join(model_path, "config.json")
+    if os.path.exists(src_cfg_path):
+        with open(src_cfg_path) as f:
+            qcfg = json.load(f).get("quantization") or {}
+        for key, val in qcfg.items():
+            if isinstance(val, dict) and val.get("bits") != 4:
+                requant_bases[key] = val
+    if requant_bases:
+        print(f"Re-quantizing {len(requant_bases)} tensors to 4-bit/group-64 "
+              f"(checkpoint stores them at other widths)")
+
+    def requant_lookup(orig_name):
+        """Return substitute bytes for one component of a re-quantized tensor."""
+        for suffix in (".weight", ".scales", ".biases"):
+            if orig_name.endswith(suffix):
+                base = orig_name[: -len(suffix)]
+                break
+        else:
+            return None
+        spec = requant_bases.get(base)
+        if spec is None:
+            return None
+        if base not in requant_cache:
+            requant_cache[base] = requantize_base(base, spec)
+        return requant_cache[base][suffix]
+
+    def requantize_base(base, spec):
+        import mlx.core as mx
+        import numpy as np
+        parts = {}
+        for suffix in (".weight", ".scales", ".biases"):
+            fn = weight_map[base + suffix]
+            parts[suffix] = mx.load(os.path.join(model_path, fn))[base + suffix]
+        full = mx.dequantize(parts[".weight"], parts[".scales"], parts[".biases"],
+                             group_size=spec.get("group_size", 64), bits=spec["bits"])
+        w, sc, bi = mx.quantize(full, group_size=64, bits=4)
+        out = {}
+        for suffix, arr in ((".weight", w), (".scales", sc), (".biases", bi)):
+            host = np.array(arr) if arr.dtype != mx.bfloat16 else np.array(arr.view(mx.uint16))
+            out[suffix] = {"data": host.tobytes(), "shape": list(arr.shape)}
+        return out
+
     offset = 0
     total_bytes = 0
 
@@ -186,6 +235,15 @@ def main():
             with open(filepath, 'rb') as sf:
                 sf.seek(data_start + tensor_offsets[0])
                 data = sf.read(byte_len)
+
+            # Tensors the checkpoint quantized at something other than 4 bits
+            # (Laguna S keeps its MoE routers at 8) are re-quantized to the
+            # 4-bit / group-64 layout the engine's kernels read.
+            sub = requant_lookup(orig_name)
+            if sub is not None:
+                data = sub["data"]
+                byte_len = len(data)
+                shape = sub["shape"]
 
             out_f.write(data)
 

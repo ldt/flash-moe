@@ -7,7 +7,8 @@
       "Bash(uv run *)",
       "Bash(make MODEL=laguna_s)",
       "Bash(awk '{print $5}')",
-      "Bash(make)"
+      "Bash(make)",
+      "Bash(./infer_laguna --model ~/models/laguna-s-mlx-4bit --prompt \"def fibonacci\\(n\\):\" --tokens 8 --k 8)"
     ]
   }
 }
