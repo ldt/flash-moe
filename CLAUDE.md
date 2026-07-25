@@ -66,6 +66,21 @@ CMD3(prev) → CMD1: attention projections + delta-net  [1.22ms GPU]
 
 On Apple Silicon, SSD DMA and GPU compute share the same memory controller and cannot be profitably overlapped. The GPU's dequant kernels are bandwidth-saturated at ~418 GiB/s. Even small background SSD DMA causes disproportionate GPU latency spikes through memory controller arbitration. The serial pipeline (GPU → SSD → GPU) is hardware-optimal.
 
+## Other models
+
+The engine is no longer hardcoded to Qwen3.5. Architecture profiles live in
+`metal_infer/arch*.h` and are selected at build time:
+
+```bash
+make                    # Qwen3.5-397B-A17B -> ./infer
+make MODEL=laguna_s     # poolside Laguna S 2.1 (118B-A8B) -> ./infer_laguna
+```
+
+Laguna S 2.1 support (48 layers, 12 global + 36 sliding-window @ 512, 256
+experts top-10 with sigmoid routing, per-head softplus attention gate, YaRN
+rope) is implemented but **not yet run on hardware** — see [LAGUNA.md](LAGUNA.md)
+for the runbook, the 36 GB memory budget, and what is still unverified.
+
 ## Quick Start
 
 See [INSTALL.md](INSTALL.md) for the full setup guide. Python scripts use [uv](https://docs.astral.sh/uv/) — run them with `uv run` (no virtualenv needed).

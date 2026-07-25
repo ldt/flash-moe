@@ -24,23 +24,29 @@ import os
 import time
 import sys
 
-# Component order and expected sizes
-COMPONENTS = [
-    {"name": "gate_proj.weight",  "offset": 0,       "size": 2097152, "dtype": "U32", "shape": [1024, 512]},
-    {"name": "gate_proj.scales",  "offset": 2097152,  "size": 131072,  "dtype": "BF16", "shape": [1024, 64]},
-    {"name": "gate_proj.biases",  "offset": 2228224,  "size": 131072,  "dtype": "BF16", "shape": [1024, 64]},
-    {"name": "up_proj.weight",    "offset": 2359296,  "size": 2097152, "dtype": "U32", "shape": [1024, 512]},
-    {"name": "up_proj.scales",    "offset": 4456448,  "size": 131072,  "dtype": "BF16", "shape": [1024, 64]},
-    {"name": "up_proj.biases",    "offset": 4587520,  "size": 131072,  "dtype": "BF16", "shape": [1024, 64]},
-    {"name": "down_proj.weight",  "offset": 4718592,  "size": 2097152, "dtype": "U32", "shape": [4096, 128]},
-    {"name": "down_proj.scales",  "offset": 6815744,  "size": 131072,  "dtype": "BF16", "shape": [4096, 16]},
-    {"name": "down_proj.biases",  "offset": 6946816,  "size": 131072,  "dtype": "BF16", "shape": [4096, 16]},
-]
+# Architecture profile — component order, sizes and counts are derived from
+# the model geometry (see arch_profile.py), so they stay in sync with the C
+# engine's arch.h. Overridden by --arch on the command line.
+from arch_profile import load_profile, describe
 
-EXPERT_SIZE = 7077888   # bytes per expert
-NUM_EXPERTS = 512
-NUM_LAYERS = 60
-LAYER_SIZE = NUM_EXPERTS * EXPERT_SIZE  # 3,623,878,656 bytes (~3.63 GB)
+_PROFILE = load_profile()
+COMPONENTS = _PROFILE["components"]
+EXPERT_SIZE = _PROFILE["expert_size"]
+NUM_EXPERTS = _PROFILE["num_experts"]
+NUM_LAYERS = _PROFILE["num_layers"]
+LAYER_SIZE = _PROFILE["layer_size"]
+
+
+def _select_arch(arch):
+    """Re-point the module globals at another architecture profile."""
+    global _PROFILE, COMPONENTS, EXPERT_SIZE, NUM_EXPERTS, NUM_LAYERS, LAYER_SIZE
+    _PROFILE = load_profile(arch)
+    COMPONENTS = _PROFILE["components"]
+    EXPERT_SIZE = _PROFILE["expert_size"]
+    NUM_EXPERTS = _PROFILE["num_experts"]
+    NUM_LAYERS = _PROFILE["num_layers"]
+    LAYER_SIZE = _PROFILE["layer_size"]
+    print(describe(_PROFILE))
 
 
 def parse_layers(spec):
@@ -213,6 +219,8 @@ def write_layout(output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description="Repack expert weights into contiguous per-layer binary files")
+    parser.add_argument('--arch', default=None,
+                        help='architecture profile (qwen35_moe, laguna_s)')
     parser.add_argument('--index', default='expert_index.json',
                         help='Path to expert_index.json')
     parser.add_argument('--layers', default=None,
@@ -222,6 +230,8 @@ def main():
     parser.add_argument('--verify-only', type=int, default=None, metavar='LAYER',
                         help='Verify a specific layer against originals')
     args = parser.parse_args()
+    if args.arch:
+        _select_arch(args.arch)
 
     print("Loading expert index...")
     expert_reads, model_path = load_index(args.index)
@@ -233,7 +243,7 @@ def main():
         print("ABORTING: component size mismatch")
         sys.exit(1)
 
-    output_dir = os.path.join(model_path, "packed_experts")
+    output_dir = os.path.join(model_path, _PROFILE.get("packed_dir", "packed_experts"))
     os.makedirs(output_dir, exist_ok=True)
     print(f"Output directory: {output_dir}")
 

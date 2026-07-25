@@ -1011,6 +1011,55 @@ kernel void sigmoid_gate(
 
 
 // ============================================================================
+// Kernel 9b: attention output gates
+// ============================================================================
+// Same shape as sigmoid_gate but parameterized by head_dim, so a model whose
+// gate is one scalar per head (rather than one per channel) can use the same
+// dispatch. Qwen3.5 uses attn_gate_sigmoid; Laguna S uses the per-head
+// softplus variant.
+
+kernel void attn_gate_sigmoid(
+    device float*       x_out    [[buffer(0)]],  // [dim] in/out
+    device const float* gate     [[buffer(1)]],  // [dim]
+    constant uint&      dim      [[buffer(2)]],
+    constant uint&      head_dim [[buffer(3)]],  // unused, kept for a common signature
+    uint tid [[thread_position_in_grid]]
+) {
+    (void)head_dim;
+    if (tid >= dim) return;
+    float g = 1.0f / (1.0f + exp(-gate[tid]));
+    x_out[tid] = x_out[tid] * g;
+}
+
+kernel void attn_gate_softplus(
+    device float*       x_out    [[buffer(0)]],  // [dim] in/out
+    device const float* gate     [[buffer(1)]],  // [dim]
+    constant uint&      dim      [[buffer(2)]],
+    constant uint&      head_dim [[buffer(3)]],  // unused
+    uint tid [[thread_position_in_grid]]
+) {
+    (void)head_dim;
+    if (tid >= dim) return;
+    float v = gate[tid];
+    float g = (v > 20.0f) ? v : log(1.0f + exp(v));
+    x_out[tid] = x_out[tid] * g;
+}
+
+kernel void attn_gate_softplus_head(
+    device float*       x_out    [[buffer(0)]],  // [dim] in/out
+    device const float* gate     [[buffer(1)]],  // [dim / head_dim] one per head
+    constant uint&      dim      [[buffer(2)]],
+    constant uint&      head_dim [[buffer(3)]],
+    uint tid [[thread_position_in_grid]]
+) {
+    if (tid >= dim) return;
+    float v = gate[tid / head_dim];
+    float g = (v > 20.0f) ? v : log(1.0f + exp(v));
+    x_out[tid] = x_out[tid] * g;
+}
+
+
+// ============================================================================
 // Kernel 10: GatedDeltaNet linear attention step (single token, all heads)
 // ============================================================================
 //

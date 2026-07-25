@@ -16,7 +16,20 @@
 # MTLDevice newLibraryWithSource:, so no offline metal compiler needed.
 
 CC = clang
-CFLAGS = -O2 -Wall -Wextra -fobjc-arc -DACCELERATE_NEW_LAPACK
+
+# Model architecture profile (see arch.h):
+#   make                  -> Qwen3.5-397B-A17B (default)
+#   make MODEL=laguna_s   -> poolside Laguna S 2.1 (118B-A8B)
+MODEL ?= qwen35_moe
+ifeq ($(MODEL),laguna_s)
+ARCH_FLAGS = -DMODEL_ARCH_LAGUNA_S
+INFER_TARGET = infer_laguna
+else
+ARCH_FLAGS =
+INFER_TARGET = infer
+endif
+
+CFLAGS = -O2 -Wall -Wextra -fobjc-arc -DACCELERATE_NEW_LAPACK $(ARCH_FLAGS)
 FRAMEWORKS = -framework Metal -framework Foundation -framework Accelerate
 LDFLAGS = -lpthread -lcompression
 
@@ -30,8 +43,8 @@ SHADER_SRC = shaders.metal
 SHADER_AIR = shaders.air
 SHADER_LIB = shaders.metallib
 
-# Inference engine (complete forward pass)
-INFER_TARGET = infer
+# Inference engine (complete forward pass). INFER_TARGET is set above and
+# depends on the selected model profile, so the two binaries can coexist.
 INFER_SRC = infer.m
 
 # Chat TUI (interactive multi-turn)
@@ -56,7 +69,7 @@ $(SHADER_LIB): $(SHADER_AIR)
 	$(METALLIB_TOOL) $(SHADER_AIR) -o $(SHADER_LIB)
 
 # Build the inference engine
-$(INFER_TARGET): $(INFER_SRC)
+$(INFER_TARGET): $(INFER_SRC) arch.h arch_runtime.h arch_qwen35_moe.h arch_laguna_s.h
 	$(CC) $(CFLAGS) $(FRAMEWORKS) $(LDFLAGS) $(INFER_SRC) -o $(INFER_TARGET)
 
 # Build the chat client (thin HTTP/SSE client + linenoise line editor)
@@ -64,7 +77,7 @@ $(CHAT_TARGET): $(CHAT_SRC) linenoise.c linenoise.h
 	$(CC) -O2 -Wall -fobjc-arc -framework Foundation $(CHAT_SRC) linenoise.c -o $(CHAT_TARGET)
 
 clean:
-	rm -f $(TARGET) $(INFER_TARGET) $(CHAT_TARGET) $(SHADER_AIR) $(SHADER_LIB)
+	rm -f $(TARGET) infer infer_laguna $(CHAT_TARGET) $(SHADER_AIR) $(SHADER_LIB)
 
 # Run targets
 run: $(TARGET)

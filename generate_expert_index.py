@@ -19,26 +19,26 @@ from collections import defaultdict
 from pathlib import Path
 
 
-# Expected component sizes per expert (bytes)
-COMPONENT_SIZES = {
-    "gate_proj.weight": 2097152,   # [1024, 512] uint32
-    "gate_proj.scales": 131072,    # [1024, 64] uint16
-    "gate_proj.biases": 131072,    # [1024, 64] uint16
-    "up_proj.weight":   2097152,   # [1024, 512] uint32
-    "up_proj.scales":   131072,    # [1024, 64] uint16
-    "up_proj.biases":   131072,    # [1024, 64] uint16
-    "down_proj.weight": 2097152,   # [4096, 128] uint32
-    "down_proj.scales": 131072,    # [4096, 16] uint16
-    "down_proj.biases": 131072,    # [4096, 16] uint16
-}
+# Architecture profile — expected component sizes and the tensor-name pattern
+# come from arch_profile.py so they track the C engine's arch.h.
+from arch_profile import load_profile, describe
 
-NUM_EXPERTS = 512
-NUM_LAYERS = 60
+_PROFILE = load_profile()
+COMPONENT_SIZES = {c["name"]: c["size"] for c in _PROFILE["components"]}
+NUM_EXPERTS = _PROFILE["num_experts"]
+NUM_LAYERS = _PROFILE["num_layers"]
+EXPERT_PATTERN = re.compile(_PROFILE["expert_pattern"])
 
-# Pattern: language_model.model.layers.{L}.mlp.switch_mlp.{component}
-EXPERT_PATTERN = re.compile(
-    r'^language_model\.model\.layers\.(\d+)\.mlp\.switch_mlp\.((?:gate|up|down)_proj\.(?:weight|scales|biases))$'
-)
+
+def _select_arch(arch):
+    """Re-point the module globals at another architecture profile."""
+    global _PROFILE, COMPONENT_SIZES, NUM_EXPERTS, NUM_LAYERS, EXPERT_PATTERN
+    _PROFILE = load_profile(arch)
+    COMPONENT_SIZES = {c["name"]: c["size"] for c in _PROFILE["components"]}
+    NUM_EXPERTS = _PROFILE["num_experts"]
+    NUM_LAYERS = _PROFILE["num_layers"]
+    EXPERT_PATTERN = re.compile(_PROFILE["expert_pattern"])
+    print(describe(_PROFILE))
 
 
 def parse_safetensors_header(filepath):
@@ -52,11 +52,15 @@ def parse_safetensors_header(filepath):
 
 def main():
     parser = argparse.ArgumentParser(description='Generate expert_index.json from safetensors')
+    parser.add_argument('--arch', default=None,
+                        help='architecture profile (qwen35_moe, laguna_s)')
     parser.add_argument('--model', type=str, required=True,
                         help='Path to model directory (containing safetensors files)')
     parser.add_argument('--output', type=str, default='expert_index.json',
                         help='Output path for expert_index.json')
     args = parser.parse_args()
+    if args.arch:
+        _select_arch(args.arch)
 
     model_path = Path(args.model)
 

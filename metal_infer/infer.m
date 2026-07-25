@@ -69,61 +69,12 @@
 // ============================================================================
 // Model constants
 // ============================================================================
+//
+// Selected at build time — see arch.h. Default is Qwen3.5-397B-A17B;
+// `make MODEL=laguna_s` builds for poolside Laguna S 2.1.
 
-#define HIDDEN_DIM          4096
-#define NUM_LAYERS          60
-#define NUM_ATTN_HEADS      32
-#define NUM_KV_HEADS        2
-#define HEAD_DIM            256
-#define VOCAB_SIZE          248320
-#define RMS_NORM_EPS        1e-6f
-#define NUM_EXPERTS         512
-#define NUM_EXPERTS_PER_TOK 10
-#define MOE_INTERMEDIATE    1024
-#define SHARED_INTERMEDIATE 1024
-#define FULL_ATTN_INTERVAL  4
-#define GROUP_SIZE          64
-#define BITS                4
-
-// Linear attention (GatedDeltaNet) constants
-#define LINEAR_NUM_V_HEADS  64
-#define LINEAR_NUM_K_HEADS  16
-#define LINEAR_KEY_DIM      128   // head_k_dim
-#define LINEAR_VALUE_DIM    128   // head_v_dim
-#define LINEAR_TOTAL_KEY    (LINEAR_NUM_K_HEADS * LINEAR_KEY_DIM)   // 2048
-#define LINEAR_TOTAL_VALUE  (LINEAR_NUM_V_HEADS * LINEAR_VALUE_DIM) // 8192
-#define LINEAR_CONV_DIM     (LINEAR_TOTAL_KEY * 2 + LINEAR_TOTAL_VALUE) // 12288
-#define CONV_KERNEL_SIZE    4
-
-// Full attention constants
-#define ROPE_THETA          10000000.0f
-#define PARTIAL_ROTARY      0.25f
-#define ROTARY_DIM          (int)(HEAD_DIM * PARTIAL_ROTARY)  // 64
-
-// Expert packed binary layout (from existing code)
-#define EXPERT_SIZE         7077888
-
-// 2-bit expert layout (from repack_experts_2bit.py)
-#define EXPERT_SIZE_2BIT    3932160
-#define GATE_W_OFF_2  0
-#define GATE_S_OFF_2  1048576
-#define GATE_B_OFF_2  1179648
-#define UP_W_OFF_2    1310720
-#define UP_S_OFF_2    2359296
-#define UP_B_OFF_2    2490368
-#define DOWN_W_OFF_2  2621440
-#define DOWN_S_OFF_2  3670016
-#define DOWN_B_OFF_2  3801088
-
-// KV cache maximum context length
-#define MAX_SEQ_LEN 1048576  // 1M context — only 15 full-attn layers need KV cache, ~15GB at max
-#define GPU_KV_SEQ  8192     // GPU KV buffer pre-allocation (grows if exceeded, falls back to CPU attn)
-
-// Special tokens
-#define EOS_TOKEN_1         248046
-#define EOS_TOKEN_2         248044
-#define THINK_START_TOKEN   248068  // <think>
-#define THINK_END_TOKEN     248069  // </think>
+#include "arch.h"
+#include "arch_runtime.h"
 
 // MODEL_PATH_DEFAULT is resolved at runtime via get_default_model_path() below
 #define MODEL_PATH_DEFAULT NULL
@@ -917,6 +868,7 @@ typedef struct {
     id<MTLComputePipelineState> attn_softmax_pipe;
     id<MTLComputePipelineState> attn_values_pipe;
     id<MTLComputePipelineState> sigmoid_gate_pipe;
+    id<MTLComputePipelineState> attn_gate_pipe;  // arch-selected attention output gate
     // Reusable buffers for attention matmuls
     id<MTLBuffer> buf_input;     // input vector [HIDDEN_DIM or max projection input]
     id<MTLBuffer> buf_output;    // output vector [max projection output]
@@ -955,7 +907,7 @@ typedef struct {
     id<MTLBuffer> buf_h_mid;        // [HIDDEN_DIM floats] residual+oproj result
     id<MTLBuffer> buf_sum_sq;       // [1 float] for RMS norm reduction
     // GPU attention buffers (for full attention layers)
-    #define NUM_FULL_ATTN_LAYERS 15
+    // NUM_FULL_ATTN_LAYERS comes from the arch profile.
     id<MTLBuffer> buf_kv_k[NUM_FULL_ATTN_LAYERS];  // K cache per full-attn layer
     id<MTLBuffer> buf_kv_v[NUM_FULL_ATTN_LAYERS];  // V cache per full-attn layer
     id<MTLBuffer> buf_attn_q;       // [NUM_ATTN_HEADS * HEAD_DIM floats] all query heads
@@ -977,7 +929,8 @@ typedef struct {
     id<MTLComputePipelineState> compute_decay_beta; // g_decay and beta_gate for delta-net
     id<MTLComputePipelineState> gated_rms_norm;  // z-gated output normalization
     // Persistent GPU state buffers for linear attention layers
-    #define NUM_LINEAR_LAYERS 45
+    // NUM_LINEAR_LAYERS comes from the arch profile (1 and unused when the
+    // model has no linear-attention layers).
     id<MTLBuffer> buf_delta_state[NUM_LINEAR_LAYERS];   // [64*128*128] float per layer
     id<MTLBuffer> buf_conv_state[NUM_LINEAR_LAYERS];     // [3*12288] float per layer
     // Scratch buffers for delta-net inputs/outputs
@@ -1056,6 +1009,13 @@ static MetalCtx *metal_setup(void) {
     ctx->attn_softmax_pipe = makePipe(@"attn_softmax_batched");
     ctx->attn_values_pipe  = makePipe(@"attn_values_batched");
     ctx->sigmoid_gate_pipe = makePipe(@"sigmoid_gate");
+#if ARCH_ATTN_GATE == ARCH_GATE_FUSED_SOFTPLUS
+    ctx->attn_gate_pipe    = makePipe(@"attn_gate_softplus");
+#elif ARCH_ATTN_GATE == ARCH_GATE_HEAD_SOFTPLUS
+    ctx->attn_gate_pipe    = makePipe(@"attn_gate_softplus_head");
+#else
+    ctx->attn_gate_pipe    = makePipe(@"attn_gate_sigmoid");
+#endif
     ctx->moe_combine_residual = makePipe(@"moe_combine_residual");
     ctx->delta_net_step    = makePipe(@"gated_delta_net_step");
     ctx->conv1d_step       = makePipe(@"conv1d_step");
@@ -1173,13 +1133,20 @@ static MetalCtx *metal_setup(void) {
     {
         size_t kv_dim = NUM_KV_HEADS * HEAD_DIM;  // 512
         size_t kv_cache_size = GPU_KV_SEQ * kv_dim * sizeof(float);
+        size_t kv_total = 0;
         for (int i = 0; i < NUM_FULL_ATTN_LAYERS; i++) {
-            ctx->buf_kv_k[i] = [ctx->device newBufferWithLength:kv_cache_size
+            // A sliding-window layer never holds more than 2*window entries,
+            // so its mirror is sized to that instead of the full GPU_KV_SEQ.
+            int window = ARCH_LAYER_WINDOW(ARCH_ATTN_SLOT_LAYER(i));
+            size_t slots = (window > 0) ? (size_t)(2 * window) : (size_t)GPU_KV_SEQ;
+            size_t sz = slots * kv_dim * sizeof(float);
+            ctx->buf_kv_k[i] = [ctx->device newBufferWithLength:sz
                                                         options:MTLResourceStorageModeShared];
-            ctx->buf_kv_v[i] = [ctx->device newBufferWithLength:kv_cache_size
+            ctx->buf_kv_v[i] = [ctx->device newBufferWithLength:sz
                                                         options:MTLResourceStorageModeShared];
+            kv_total += 2 * sz;
         }
-        ctx->buf_attn_q      = [ctx->device newBufferWithLength:NUM_ATTN_HEADS * HEAD_DIM * sizeof(float)
+        ctx->buf_attn_q     = [ctx->device newBufferWithLength:NUM_ATTN_HEADS * HEAD_DIM * sizeof(float)
                                                         options:MTLResourceStorageModeShared];
         ctx->buf_attn_scores = [ctx->device newBufferWithLength:(size_t)NUM_ATTN_HEADS * GPU_KV_SEQ * sizeof(float)
                                                         options:MTLResourceStorageModeShared];
@@ -1187,9 +1154,10 @@ static MetalCtx *metal_setup(void) {
                                                         options:MTLResourceStorageModeShared];
         ctx->buf_attn_gate   = [ctx->device newBufferWithLength:NUM_ATTN_HEADS * HEAD_DIM * sizeof(float)
                                                         options:MTLResourceStorageModeShared];
-        printf("[metal] GPU attention buffers: %d KV caches (%.1f MB each), scores buf %.1f MB\n",
-               NUM_FULL_ATTN_LAYERS, kv_cache_size / 1e6,
-               (double)(NUM_ATTN_HEADS * MAX_SEQ_LEN * sizeof(float)) / 1e6);
+        (void)kv_cache_size;
+        printf("[metal] GPU attention buffers: %d KV caches (%.1f MB total), scores buf %.1f MB\n",
+               NUM_FULL_ATTN_LAYERS, kv_total / 1e6,
+               (double)(NUM_ATTN_HEADS * GPU_KV_SEQ * sizeof(float)) / 1e6);
     }
 
     // Persistent GPU state buffers for delta-net (linear attention layers)
@@ -2025,18 +1993,25 @@ static void gpu_expert_forward(
 // ============================================================================
 
 static void apply_rotary_emb(float *q, float *k, int pos, int num_heads, int num_kv_heads,
-                              int head_dim, int rotary_dim) {
+                              int head_dim, int rotary_dim, int rope_table) {
     // Apply RoPE to the first rotary_dim dimensions of each head
     // NON-TRADITIONAL (MLX default): pairs are (x[i], x[i + half_dim])
     // where half_dim = rotary_dim / 2
+    //
+    // rope_table selects the frequency set: 0 = unscaled, 1 = long-context
+    // scaled (YaRN). Models without rope scaling always pass 0, and the two
+    // tables are identical in that case.
+    arch_rope_init();
+    const float *freqs = g_rope_freq[rope_table];
+    float mscale = g_rope_mscale[rope_table];
+
     int half = rotary_dim / 2;
     for (int h = 0; h < num_heads; h++) {
         float *qh = q + h * head_dim;
         for (int i = 0; i < half; i++) {
-            float freq = 1.0f / powf(ROPE_THETA, (float)(2 * i) / rotary_dim);
-            float angle = (float)pos * freq;
-            float cos_a = cosf(angle);
-            float sin_a = sinf(angle);
+            float angle = (float)pos * freqs[i];
+            float cos_a = cosf(angle) * mscale;
+            float sin_a = sinf(angle) * mscale;
 
             float q0 = qh[i];
             float q1 = qh[i + half];
@@ -2047,10 +2022,9 @@ static void apply_rotary_emb(float *q, float *k, int pos, int num_heads, int num
     for (int h = 0; h < num_kv_heads; h++) {
         float *kh = k + h * head_dim;
         for (int i = 0; i < half; i++) {
-            float freq = 1.0f / powf(ROPE_THETA, (float)(2 * i) / rotary_dim);
-            float angle = (float)pos * freq;
-            float cos_a = cosf(angle);
-            float sin_a = sinf(angle);
+            float angle = (float)pos * freqs[i];
+            float cos_a = cosf(angle) * mscale;
+            float sin_a = sinf(angle) * mscale;
 
             float k0 = kh[i];
             float k1 = kh[i + half];
@@ -2068,12 +2042,23 @@ typedef struct {
     float *k_cache;  // [max_seq, num_kv_heads * head_dim]
     float *v_cache;  // [max_seq, num_kv_heads * head_dim]
     int len;         // current number of cached entries
+    int slots;       // allocated capacity in entries
 } KVCache;
 
-static KVCache *kv_cache_new(void) {
+// Slots a layer's KV cache needs: the full context for a global layer, twice
+// the window for a sliding-window layer (which is compacted back to one
+// window's worth whenever it fills).
+static int kv_cache_slots(int layer_idx) {
+    int window = ARCH_LAYER_WINDOW(layer_idx);
+    return (window > 0) ? (2 * window) : MAX_SEQ_LEN;
+}
+
+static KVCache *kv_cache_new(int layer_idx) {
     KVCache *c = calloc(1, sizeof(KVCache));
-    c->k_cache = calloc(MAX_SEQ_LEN * NUM_KV_HEADS * HEAD_DIM, sizeof(float));
-    c->v_cache = calloc(MAX_SEQ_LEN * NUM_KV_HEADS * HEAD_DIM, sizeof(float));
+    size_t slots = (size_t)kv_cache_slots(layer_idx);
+    c->k_cache = calloc(slots * NUM_KV_HEADS * HEAD_DIM, sizeof(float));
+    c->v_cache = calloc(slots * NUM_KV_HEADS * HEAD_DIM, sizeof(float));
+    c->slots = (int)slots;
     c->len = 0;
     return c;
 }
@@ -2257,7 +2242,8 @@ static void full_attention_forward(
 
 
     // ---- RoPE ----
-    apply_rotary_emb(q, k, pos, NUM_ATTN_HEADS, NUM_KV_HEADS, HEAD_DIM, ROTARY_DIM);
+    apply_rotary_emb(q, k, pos, NUM_ATTN_HEADS, NUM_KV_HEADS, HEAD_DIM, ROTARY_DIM,
+                     ARCH_ROPE_TABLE(layer_idx));
 
     // ---- Update KV cache ----
     int cache_pos = kv->len;
@@ -2710,7 +2696,8 @@ static void moe_forward(
     }
 
     // Softmax routing scores
-    cpu_softmax(gate_scores, NUM_EXPERTS);
+    // Router activation: softmax (Qwen3.5) or per-expert sigmoid (Laguna S)
+    arch_router_activation(gate_scores, NUM_EXPERTS);
 
     // Top-K expert selection
     int expert_indices[64];
@@ -3659,6 +3646,9 @@ typedef struct {
     uint32_t *v_w; uint16_t *v_s, *v_b;
     uint32_t *o_w; uint16_t *o_s, *o_b;
     uint16_t *q_norm_w, *k_norm_w;
+    // Separate attention output-gate projection ([NUM_ATTN_HEADS] out), used
+    // by models whose gate is not fused into q_proj. NULL otherwise.
+    uint32_t *ag_w; uint16_t *ag_s, *ag_b;
 
     // Linear attention weights (non-NULL only for linear attention layers)
     uint32_t *qkv_w; uint16_t *qkv_s, *qkv_b;
@@ -3688,7 +3678,7 @@ static void build_layer_cache(WeightFile *wf) {
 
     for (int i = 0; i < NUM_LAYERS; i++) {
         LayerWeightCache *lc = &layer_cache[i];
-        int is_full = ((i + 1) % FULL_ATTN_INTERVAL == 0);
+        int is_full = ARCH_LAYER_IS_ATTN(i);
 
         // Norms
         snprintf(name, sizeof(name), "model.layers.%d.input_layernorm.weight", i);
@@ -3726,6 +3716,33 @@ static void build_layer_cache(WeightFile *wf) {
             lc->q_norm_w = get_tensor_ptr(wf, name);
             snprintf(name, sizeof(name), "model.layers.%d.self_attn.k_norm.weight", i);
             lc->k_norm_w = get_tensor_ptr(wf, name);
+
+#if !ARCH_GATE_FUSED_IN_QPROJ && ARCH_ATTN_GATE != ARCH_GATE_NONE
+            // Separate per-head output-gate projection. The tensor name is
+            // not standardized across MoE releases, so try the ones in use.
+            static const char *gate_names[] = {
+                "gate_proj", "o_gate", "attn_gate", "output_gate", "g_proj",
+            };
+            for (size_t gi = 0; gi < sizeof(gate_names) / sizeof(gate_names[0]); gi++) {
+                snprintf(name, sizeof(name), "model.layers.%d.self_attn.%s.weight", i, gate_names[gi]);
+                uint32_t *w = get_tensor_ptr(wf, name);
+                if (!w) continue;
+                snprintf(name, sizeof(name), "model.layers.%d.self_attn.%s.scales", i, gate_names[gi]);
+                uint16_t *sc = get_tensor_ptr(wf, name);
+                snprintf(name, sizeof(name), "model.layers.%d.self_attn.%s.biases", i, gate_names[gi]);
+                uint16_t *bi = get_tensor_ptr(wf, name);
+                if (sc && bi) { lc->ag_w = w; lc->ag_s = sc; lc->ag_b = bi; break; }
+            }
+            if (!lc->ag_w && i == 0) {
+                fprintf(stderr,
+                        "[arch] WARNING: %s expects a per-head attention output gate but no\n"
+                        "       quantized gate projection was found in model_weights.bin\n"
+                        "       (looked for self_attn.{gate_proj,o_gate,attn_gate,output_gate,g_proj}).\n"
+                        "       Attention gating is DISABLED — output will be wrong. Re-run\n"
+                        "       extract_weights.py, and check gen_arch_header.py's report for\n"
+                        "       the real tensor name.\n", ARCH_NAME);
+            }
+#endif
         } else {
             // Linear attention
             snprintf(name, sizeof(name), "model.layers.%d.linear_attn.in_proj_qkv.weight", i);
@@ -3959,6 +3976,7 @@ static float *s_k_proj_out = NULL;  // [NUM_KV_HEADS * HEAD_DIM]
 static float *s_v_proj_out = NULL;  // [NUM_KV_HEADS * HEAD_DIM]
 static float *s_q         = NULL;   // [NUM_ATTN_HEADS * HEAD_DIM]
 static float *s_q_gate    = NULL;   // [NUM_ATTN_HEADS * HEAD_DIM]
+static float *s_attn_gate_out = NULL;  // [ARCH_GATE_DIM] separate gate projection output
 static float *s_attn_out  = NULL;   // [NUM_ATTN_HEADS * HEAD_DIM]
 // Linear attention scratch
 static float *s_qkv_proj_out = NULL;   // [LINEAR_CONV_DIM]
@@ -3987,6 +4005,7 @@ static void init_layer_scratch(void) {
     s_v_proj_out = calloc(NUM_KV_HEADS * HEAD_DIM, sizeof(float));
     s_q          = calloc(NUM_ATTN_HEADS * HEAD_DIM, sizeof(float));
     s_q_gate     = calloc(NUM_ATTN_HEADS * HEAD_DIM, sizeof(float));
+    s_attn_gate_out = calloc(ARCH_GATE_DIM > 0 ? ARCH_GATE_DIM : 1, sizeof(float));
     s_attn_out   = calloc(NUM_ATTN_HEADS * HEAD_DIM, sizeof(float));
     s_qkv_proj_out = calloc(LINEAR_CONV_DIM, sizeof(float));
     s_z_proj_out   = calloc(LINEAR_TOTAL_VALUE, sizeof(float));
@@ -4028,7 +4047,7 @@ static void fused_layer_forward(
     float *qkv_out = NULL, *z_out = NULL, *beta_out = NULL, *alpha_out = NULL;
 
     if (is_full) {
-        int q_proj_dim = NUM_ATTN_HEADS * HEAD_DIM * 2;
+        int q_proj_dim = ARCH_Q_PROJ_DIM;
         int kv_dim = NUM_KV_HEADS * HEAD_DIM;
 
         q_proj_out = s_q_proj_out;
@@ -4041,6 +4060,14 @@ static void fused_layer_forward(
             attn_specs[1] = (BatchMatvecSpec){ lc->k_w, lc->k_s, lc->k_b, k_out,      (uint32_t)kv_dim,     HIDDEN_DIM, GROUP_SIZE, 1 };
             attn_specs[2] = (BatchMatvecSpec){ lc->v_w, lc->v_s, lc->v_b, v_out,      (uint32_t)kv_dim,     HIDDEN_DIM, GROUP_SIZE, 2 };
             num_attn_specs = 3;
+#if !ARCH_GATE_FUSED_IN_QPROJ && ARCH_ATTN_GATE != ARCH_GATE_NONE
+            // Per-head output gate lives in its own small projection.
+            if (lc->ag_w && lc->ag_s && lc->ag_b) {
+                attn_specs[3] = (BatchMatvecSpec){ lc->ag_w, lc->ag_s, lc->ag_b, s_attn_gate_out,
+                                                   (uint32_t)ARCH_GATE_DIM, HIDDEN_DIM, GROUP_SIZE, 3 };
+                num_attn_specs = 4;
+            }
+#endif
         }
     } else {
         int qkv_dim = LINEAR_CONV_DIM;
@@ -4070,7 +4097,7 @@ static void fused_layer_forward(
     // Pre-compute linear_layer_idx for GPU linear attention encoding in CMD1
     int linear_layer_idx = -1;
     if (!is_full) {
-        linear_layer_idx = layer_idx - (layer_idx + 1) / FULL_ATTN_INTERVAL;
+        linear_layer_idx = ARCH_LINEAR_IDX(layer_idx);
     }
     // Can we run the full linear attention pipeline on GPU in CMD1?
     int can_gpu_linear = (gpu_linear_attn_enabled &&
@@ -4477,21 +4504,33 @@ static void fused_layer_forward(
 
     // ---- CPU attention compute (produces attn_out for o_proj) ----
     float *attn_out_for_oproj = NULL;
+    // Attention range for this layer, needed again when CMD2 encodes the GPU
+    // attention dispatches. Sliding-window layers only expose the last
+    // ARCH_LAYER_WINDOW(layer_idx) cache entries.
+    int gpu_attn_start = 0, gpu_attn_len = 0;
 
     if (is_full) {
         // ---- Full attention CPU compute ----
-        int q_proj_dim = NUM_ATTN_HEADS * HEAD_DIM * 2;
         int q_dim = NUM_ATTN_HEADS * HEAD_DIM;
         int kv_dim = NUM_KV_HEADS * HEAD_DIM;
-        (void)q_proj_dim;
 
         float *q = s_q;
         float *q_gate = s_q_gate;
+#if ARCH_GATE_FUSED_IN_QPROJ
+        // q_proj emits [q | gate] per head — split them apart.
         for (int h = 0; h < NUM_ATTN_HEADS; h++) {
             float *src = q_proj_out + h * (2 * HEAD_DIM);
             memcpy(q + h * HEAD_DIM, src, HEAD_DIM * sizeof(float));
             memcpy(q_gate + h * HEAD_DIM, src + HEAD_DIM, HEAD_DIM * sizeof(float));
         }
+#else
+        // q_proj emits q only; the gate (if any) comes from its own
+        // projection, already written to s_attn_gate_out by CMD1.
+        memcpy(q, q_proj_out, q_dim * sizeof(float));
+        if (ARCH_GATE_DIM > 0) {
+            memcpy(q_gate, s_attn_gate_out, ARCH_GATE_DIM * sizeof(float));
+        }
+#endif
 
         // Q/K RMSNorm
         uint16_t *qnorm_w = lc->q_norm_w;
@@ -4515,22 +4554,54 @@ static void fused_layer_forward(
             }
         }
 
-        // RoPE
-        apply_rotary_emb(q, k_out, pos, NUM_ATTN_HEADS, NUM_KV_HEADS, HEAD_DIM, ROTARY_DIM);
+        // RoPE — global layers may use long-context scaled frequencies,
+        // sliding-window layers never do.
+        apply_rotary_emb(q, k_out, pos, NUM_ATTN_HEADS, NUM_KV_HEADS, HEAD_DIM, ROTARY_DIM,
+                         ARCH_ROPE_TABLE(layer_idx));
+
+        int fa_idx = ARCH_ATTN_IDX(layer_idx);
+        int window = ARCH_LAYER_WINDOW(layer_idx);
+        int gpu_kv_mirror = (g_metal && g_metal->attn_scores_pipe &&
+                             fa_idx >= 0 && fa_idx < NUM_FULL_ATTN_LAYERS);
+
+        // Sliding-window layers keep the cache bounded: once it holds 2*W
+        // entries, drop the oldest W. Attention then always reads a
+        // contiguous range, so the kernels below are untouched.
+        if (window > 0 && kv->len >= 2 * window) {
+            int keep = window;
+            int drop = kv->len - keep;
+            memmove(kv->k_cache, kv->k_cache + drop * kv_dim,
+                    (size_t)keep * kv_dim * sizeof(float));
+            memmove(kv->v_cache, kv->v_cache + drop * kv_dim,
+                    (size_t)keep * kv_dim * sizeof(float));
+            if (gpu_kv_mirror) {
+                float *gk = (float *)[g_metal->buf_kv_k[fa_idx] contents];
+                float *gv = (float *)[g_metal->buf_kv_v[fa_idx] contents];
+                memmove(gk, gk + (size_t)drop * kv_dim, (size_t)keep * kv_dim * sizeof(float));
+                memmove(gv, gv + (size_t)drop * kv_dim, (size_t)keep * kv_dim * sizeof(float));
+            }
+            kv->len = keep;
+        }
 
         // Update KV cache (CPU + GPU mirror)
         int cache_pos = kv->len;
         memcpy(kv->k_cache + cache_pos * kv_dim, k_out, kv_dim * sizeof(float));
         memcpy(kv->v_cache + cache_pos * kv_dim, v_out, kv_dim * sizeof(float));
 
-        int fa_idx = (layer_idx + 1) / FULL_ATTN_INTERVAL - 1;
-        if (g_metal && g_metal->attn_scores_pipe && fa_idx >= 0 && fa_idx < NUM_FULL_ATTN_LAYERS) {
+        if (gpu_kv_mirror) {
             memcpy((float *)[g_metal->buf_kv_k[fa_idx] contents] + cache_pos * kv_dim,
                    k_out, kv_dim * sizeof(float));
             memcpy((float *)[g_metal->buf_kv_v[fa_idx] contents] + cache_pos * kv_dim,
                    v_out, kv_dim * sizeof(float));
         }
         kv->len++;
+
+        // Attention range: [attn_start, kv->len) — the whole cache for global
+        // layers, the last `window` entries for sliding-window layers.
+        int attn_start = arch_attn_start(window, kv->len);
+        int attn_len = kv->len - attn_start;
+        gpu_attn_start = attn_start;
+        gpu_attn_len = attn_len;
 
         // Scaled dot-product attention (GQA) — GPU or CPU
         int heads_per_kv = NUM_ATTN_HEADS / NUM_KV_HEADS;
@@ -4540,39 +4611,38 @@ static void fused_layer_forward(
 
         // GPU attention: defer dispatches to CMD2 (fused into single cmd buffer).
         // Only enabled when seq_len >= 32 (below that, CPU is faster).
-        int gpu_attn_ready = (g_metal && g_metal->attn_scores_pipe &&
-                              fa_idx >= 0 && fa_idx < NUM_FULL_ATTN_LAYERS &&
-                              kv->len >= 32 && kv->len < GPU_KV_SEQ);
+        int gpu_attn_ready = (gpu_kv_mirror &&
+                              attn_len >= 32 && kv->len < GPU_KV_SEQ);
 
         if (gpu_attn_ready) {
             // Copy Q and gate to GPU; attention dispatches will be in CMD2
             memcpy([g_metal->buf_attn_q contents], q, q_dim * sizeof(float));
-            memcpy([g_metal->buf_attn_gate contents], q_gate, q_dim * sizeof(float));
+            if (ARCH_GATE_DIM > 0) {
+                memcpy([g_metal->buf_attn_gate contents], q_gate,
+                       ARCH_GATE_DIM * sizeof(float));
+            }
             // attn_out_for_oproj will be set to NULL below — CMD2 reads buf_attn_out
         } else {
             // CPU fallback
             for (int h = 0; h < NUM_ATTN_HEADS; h++) {
                 int kv_h = h / heads_per_kv;
                 float *qh = q + h * HEAD_DIM;
-                float *scores = malloc(kv->len * sizeof(float));
-                for (int p = 0; p < kv->len; p++) {
-                    float *kp = kv->k_cache + p * kv_dim + kv_h * HEAD_DIM;
+                float *scores = malloc(attn_len * sizeof(float));
+                for (int p = 0; p < attn_len; p++) {
+                    float *kp = kv->k_cache + (attn_start + p) * kv_dim + kv_h * HEAD_DIM;
                     float dot = 0.0f;
                     for (int d = 0; d < HEAD_DIM; d++) dot += qh[d] * kp[d];
                     scores[p] = dot * scale;
                 }
-                cpu_softmax(scores, kv->len);
+                cpu_softmax(scores, attn_len);
                 float *oh = attn_out + h * HEAD_DIM;
-                for (int p = 0; p < kv->len; p++) {
-                    float *vp = kv->v_cache + p * kv_dim + kv_h * HEAD_DIM;
+                for (int p = 0; p < attn_len; p++) {
+                    float *vp = kv->v_cache + (attn_start + p) * kv_dim + kv_h * HEAD_DIM;
                     for (int d = 0; d < HEAD_DIM; d++) oh[d] += scores[p] * vp[d];
                 }
                 free(scores);
             }
-            for (int i = 0; i < q_dim; i++) {
-                float g = 1.0f / (1.0f + expf(-q_gate[i]));
-                attn_out[i] *= g;
-            }
+            arch_apply_attn_gate(attn_out, q_gate);
         }
 
         if (gpu_attn_ready) {
@@ -4647,8 +4717,8 @@ static void fused_layer_forward(
             // Compute linear_layer_idx: count of non-full-attention layers before this one.
             // Full attention at (layer_idx+1) % 4 == 0, i.e. layers 3,7,11,...
             // linear_layer_idx = layer_idx - number_of_full_layers_at_or_before
-            //                  = layer_idx - (layer_idx + 1) / FULL_ATTN_INTERVAL
-            int linear_layer_idx = layer_idx - (layer_idx + 1) / FULL_ATTN_INTERVAL;
+            //                  = ARCH_LINEAR_IDX(layer_idx)
+            int linear_layer_idx = ARCH_LINEAR_IDX(layer_idx);
 
             // GPU delta-net path (falls back to CPU if pipeline unavailable)
             if (g_metal && g_metal->delta_net_step &&
@@ -4819,13 +4889,17 @@ static void fused_layer_forward(
 
         // ---- GPU attention dispatches (only for full-attn layers with GPU path) ----
         if (gpu_attn_fuse) {
-            int fa_idx = (layer_idx + 1) / FULL_ATTN_INTERVAL - 1;
+            int fa_idx = ARCH_ATTN_IDX(layer_idx);
             int kv_dim = NUM_KV_HEADS * HEAD_DIM;
             int heads_per_kv = NUM_ATTN_HEADS / NUM_KV_HEADS;
             float scale = 1.0f / sqrtf((float)HEAD_DIM);
             uint32_t hd = HEAD_DIM;
             uint32_t kvd = (uint32_t)kv_dim;
-            uint32_t sl = (uint32_t)kv->len;
+            // Sliding-window layers attend to a suffix of the cache. Rather
+            // than teach the kernels about a start position, bind the KV
+            // buffers at a byte offset and hand them the shortened length.
+            uint32_t sl = (uint32_t)gpu_attn_len;
+            NSUInteger kv_off = (NSUInteger)gpu_attn_start * kv_dim * sizeof(float);
             uint32_t seq_stride = GPU_KV_SEQ;
             uint32_t hpkv = (uint32_t)heads_per_kv;
 
@@ -4834,7 +4908,7 @@ static void fused_layer_forward(
                 id<MTLComputeCommandEncoder> enc = [cmd_fused computeCommandEncoder];
                 [enc setComputePipelineState:g_metal->attn_scores_pipe];
                 [enc setBuffer:g_metal->buf_attn_q          offset:0 atIndex:0];
-                [enc setBuffer:g_metal->buf_kv_k[fa_idx]    offset:0 atIndex:1];
+                [enc setBuffer:g_metal->buf_kv_k[fa_idx]    offset:kv_off atIndex:1];
                 [enc setBuffer:g_metal->buf_attn_scores     offset:0 atIndex:2];
                 [enc setBytes:&hd        length:4 atIndex:3];
                 [enc setBytes:&kvd       length:4 atIndex:4];
@@ -4864,7 +4938,7 @@ static void fused_layer_forward(
                 id<MTLComputeCommandEncoder> enc = [cmd_fused computeCommandEncoder];
                 [enc setComputePipelineState:g_metal->attn_values_pipe];
                 [enc setBuffer:g_metal->buf_attn_scores   offset:0 atIndex:0];
-                [enc setBuffer:g_metal->buf_kv_v[fa_idx]  offset:0 atIndex:1];
+                [enc setBuffer:g_metal->buf_kv_v[fa_idx]  offset:kv_off atIndex:1];
                 [enc setBuffer:g_metal->buf_attn_out      offset:0 atIndex:2];
                 [enc setBytes:&hd        length:4 atIndex:3];
                 [enc setBytes:&kvd       length:4 atIndex:4];
@@ -4877,19 +4951,24 @@ static void fused_layer_forward(
                     threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
                 [enc endEncoding];
             }
-            // Enc A4: sigmoid_gate
+            // Enc A4: attention output gate (sigmoid or softplus, per channel
+            // or per head depending on the model)
+#if ARCH_ATTN_GATE != ARCH_GATE_NONE
             {
                 uint32_t qdim = NUM_ATTN_HEADS * HEAD_DIM;
+                uint32_t hdim = HEAD_DIM;
                 id<MTLComputeCommandEncoder> enc = [cmd_fused computeCommandEncoder];
-                [enc setComputePipelineState:g_metal->sigmoid_gate_pipe];
+                [enc setComputePipelineState:g_metal->attn_gate_pipe];
                 [enc setBuffer:g_metal->buf_attn_out  offset:0 atIndex:0];
                 [enc setBuffer:g_metal->buf_attn_gate offset:0 atIndex:1];
                 [enc setBytes:&qdim length:4 atIndex:2];
+                [enc setBytes:&hdim length:4 atIndex:3];
                 uint32_t tgs = (qdim + 255) / 256;
                 [enc dispatchThreadgroups:MTLSizeMake(tgs, 1, 1)
                     threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
                 [enc endEncoding];
             }
+#endif
         }
 
         // ---- o_proj matvec ----
@@ -5031,7 +5110,8 @@ static void fused_layer_forward(
 
     // ---- Softmax + top-K (CPU) ----
     if (g_timing_enabled) { t0 = now_ms(); }
-    cpu_softmax(gate_scores, NUM_EXPERTS);
+    // Router activation: softmax (Qwen3.5) or per-expert sigmoid (Laguna S)
+    arch_router_activation(gate_scores, NUM_EXPERTS);
     int expert_indices[64];
     float expert_weights[64];
     cpu_topk(gate_scores, NUM_EXPERTS, K, expert_indices, expert_weights);
@@ -5949,7 +6029,7 @@ static void sync_cpu_to_gpu_delta_state_serve(void **layer_states) {
     if (!g_metal || !g_metal->delta_net_step || !layer_states) return;
     int li = 0;
     for (int i = 0; i < NUM_LAYERS; i++) {
-        if ((i + 1) % FULL_ATTN_INTERVAL == 0) continue;
+        if ARCH_LAYER_IS_ATTN(i) continue;
         if (!layer_states[i]) { li++; continue; }
         LinearAttnState *la = (LinearAttnState *)layer_states[i];
         if (li < NUM_LINEAR_LAYERS) {
@@ -6025,7 +6105,7 @@ static void serve_loop(
                 embed_lookup(wf, sys_pt->ids[i], hidden);
             }
             for (int layer = 0; layer < NUM_LAYERS; layer++) {
-                int is_full = ((layer + 1) % FULL_ATTN_INTERVAL == 0);
+                int is_full = ARCH_LAYER_IS_ATTN(layer);
                 fused_layer_forward(wf, layer, hidden,
                                     is_full ? kv_caches[layer] : NULL,
                                     is_full ? NULL : layer_states[layer],
@@ -6046,7 +6126,7 @@ static void serve_loop(
                 embed_lookup(wf, sys_pt->ids[0], hidden);
             }
             for (int layer = 0; layer < NUM_LAYERS; layer++) {
-                int is_full = ((layer + 1) % FULL_ATTN_INTERVAL == 0);
+                int is_full = ARCH_LAYER_IS_ATTN(layer);
                 fused_layer_forward(wf, layer, hidden,
                                     is_full ? kv_caches[layer] : NULL,
                                     is_full ? NULL : layer_states[layer],
@@ -6070,6 +6150,7 @@ static void serve_loop(
         float *k_snapshot;
         float *v_snapshot;
         int len;
+        size_t bytes;
     } KVSnapshot;
     KVSnapshot kv_snapshots[NUM_LAYERS];
     memset(kv_snapshots, 0, sizeof(kv_snapshots));
@@ -6086,7 +6167,10 @@ static void serve_loop(
 
     for (int i = 0; i < NUM_LAYERS; i++) {
         if (kv_caches[i]) {
-            size_t sz = sys_pos * kv_dim * sizeof(float);
+            // Snapshot exactly what the cache holds. For a sliding-window
+            // layer that is at most 2*window entries, not sys_pos of them.
+            size_t sz = (size_t)kv_caches[i]->len * kv_dim * sizeof(float);
+            kv_snapshots[i].bytes = sz;
             kv_snapshots[i].k_snapshot = malloc(sz);
             kv_snapshots[i].v_snapshot = malloc(sz);
             memcpy(kv_snapshots[i].k_snapshot, kv_caches[i]->k_cache, sz);
@@ -6251,13 +6335,13 @@ static void serve_loop(
                 // This skips re-prefilling the system prompt tokens (~20 tokens, ~6s saved).
                 for (int i = 0; i < NUM_LAYERS; i++) {
                     if (kv_caches[i] && kv_snapshots[i].k_snapshot) {
-                        size_t sz = sys_prompt_len * kv_dim * sizeof(float);
+                        size_t sz = kv_snapshots[i].bytes;
                         memcpy(kv_caches[i]->k_cache, kv_snapshots[i].k_snapshot, sz);
                         memcpy(kv_caches[i]->v_cache, kv_snapshots[i].v_snapshot, sz);
                         kv_caches[i]->len = kv_snapshots[i].len;
                         // Also restore GPU KV mirror
                         if (g_metal) {
-                            int fa_idx = (i + 1) / FULL_ATTN_INTERVAL - 1;
+                            int fa_idx = ARCH_ATTN_IDX(i);
                             if (fa_idx >= 0 && fa_idx < NUM_FULL_ATTN_LAYERS) {
                                 memcpy([g_metal->buf_kv_k[fa_idx] contents],
                                        kv_snapshots[i].k_snapshot, sz);
@@ -6325,7 +6409,7 @@ static void serve_loop(
                     embed_lookup(wf, pt->ids[i], hidden);
                 }
                 for (int layer = 0; layer < NUM_LAYERS; layer++) {
-                    int is_full = ((layer + 1) % FULL_ATTN_INTERVAL == 0);
+                    int is_full = ARCH_LAYER_IS_ATTN(layer);
                     fused_layer_forward(wf, layer, hidden,
                                         is_full ? kv_caches[layer] : NULL,
                                         is_full ? NULL : layer_states[layer],
@@ -6346,7 +6430,7 @@ static void serve_loop(
                     embed_lookup(wf, pt->ids[0], hidden);
                 }
                 for (int layer = 0; layer < NUM_LAYERS; layer++) {
-                    int is_full = ((layer + 1) % FULL_ATTN_INTERVAL == 0);
+                    int is_full = ARCH_LAYER_IS_ATTN(layer);
                     fused_layer_forward(wf, layer, hidden,
                                         is_full ? kv_caches[layer] : NULL,
                                         is_full ? NULL : layer_states[layer],
@@ -6391,7 +6475,7 @@ static void serve_loop(
                     cache_telemetry_note_token();
                     embed_lookup(wf, next_token, hidden);
                     for (int layer = 0; layer < NUM_LAYERS; layer++) {
-                        int is_full = ((layer + 1) % FULL_ATTN_INTERVAL == 0);
+                        int is_full = ARCH_LAYER_IS_ATTN(layer);
                         fused_layer_forward(wf, layer, hidden,
                                             is_full ? kv_caches[layer] : NULL,
                                             is_full ? NULL : layer_states[layer],
@@ -6433,7 +6517,7 @@ static void serve_loop(
                 cache_telemetry_note_token();
                 embed_lookup(wf, next_token, hidden);
                 for (int layer = 0; layer < NUM_LAYERS; layer++) {
-                    int is_full = ((layer + 1) % FULL_ATTN_INTERVAL == 0);
+                    int is_full = ARCH_LAYER_IS_ATTN(layer);
                     fused_layer_forward(wf, layer, hidden,
                                         is_full ? kv_caches[layer] : NULL,
                                         is_full ? NULL : layer_states[layer],
@@ -6864,9 +6948,9 @@ int main(int argc, char **argv) {
         KVCache **kv_caches = calloc(NUM_LAYERS, sizeof(KVCache *));
 
         for (int i = 0; i < NUM_LAYERS; i++) {
-            int is_full = ((i + 1) % FULL_ATTN_INTERVAL == 0);
+            int is_full = ARCH_LAYER_IS_ATTN(i);
             if (is_full) {
-                kv_caches[i] = kv_cache_new();
+                kv_caches[i] = kv_cache_new(i);
             } else {
                 layer_states[i] = linear_attn_state_new();
             }
@@ -6933,7 +7017,7 @@ int main(int argc, char **argv) {
 
                 // Run through all 60 transformer layers
                 for (int layer = 0; layer < NUM_LAYERS; layer++) {
-                    int is_full = ((layer + 1) % FULL_ATTN_INTERVAL == 0);
+                    int is_full = ARCH_LAYER_IS_ATTN(layer);
                     fused_layer_forward(wf, layer, hidden,
                                         is_full ? kv_caches[layer] : NULL,
                                         is_full ? NULL : layer_states[layer],
@@ -6971,7 +7055,7 @@ int main(int argc, char **argv) {
             }
 
             for (int layer = 0; layer < NUM_LAYERS; layer++) {
-                int is_full = ((layer + 1) % FULL_ATTN_INTERVAL == 0);
+                int is_full = ARCH_LAYER_IS_ATTN(layer);
                 fused_layer_forward(wf, layer, hidden,
                                     is_full ? kv_caches[layer] : NULL,
                                     is_full ? NULL : layer_states[layer],
@@ -7058,7 +7142,7 @@ int main(int argc, char **argv) {
 
             // Run 60 layers (fused: 1+K cmd buffers per layer)
             for (int layer = 0; layer < NUM_LAYERS; layer++) {
-                int is_full = ((layer + 1) % FULL_ATTN_INTERVAL == 0);
+                int is_full = ARCH_LAYER_IS_ATTN(layer);
                 fused_layer_forward(wf, layer, hidden,
                                     is_full ? kv_caches[layer] : NULL,
                                     is_full ? NULL : layer_states[layer],
