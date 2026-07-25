@@ -129,17 +129,17 @@ static inline float arch_sigmoid_f(float x) {
 //                        of q_proj.
 //   ARCH_GATE_HEAD_*   : gate_src holds NUM_ATTN_HEADS values, one scalar per
 //                        head, produced by a separate projection.
-static inline void arch_apply_attn_gate(float *attn_out, const float *gate_src) {
+static inline void arch_apply_attn_gate(float *attn_out, const float *gate_src, int nheads) {
 #if ARCH_ATTN_GATE == ARCH_GATE_NONE
-    (void)attn_out; (void)gate_src;
+    (void)attn_out; (void)gate_src; (void)nheads;
 #elif ARCH_ATTN_GATE == ARCH_GATE_FUSED_SIGMOID
-    int n = NUM_ATTN_HEADS * HEAD_DIM;
+    int n = nheads * HEAD_DIM;
     for (int i = 0; i < n; i++) attn_out[i] *= arch_sigmoid_f(gate_src[i]);
 #elif ARCH_ATTN_GATE == ARCH_GATE_FUSED_SOFTPLUS
-    int n = NUM_ATTN_HEADS * HEAD_DIM;
+    int n = nheads * HEAD_DIM;
     for (int i = 0; i < n; i++) attn_out[i] *= arch_softplus(gate_src[i]);
 #elif ARCH_ATTN_GATE == ARCH_GATE_HEAD_SOFTPLUS
-    for (int h = 0; h < NUM_ATTN_HEADS; h++) {
+    for (int h = 0; h < nheads; h++) {
         float g = arch_softplus(gate_src[h]);
         float *oh = attn_out + h * HEAD_DIM;
         for (int d = 0; d < HEAD_DIM; d++) oh[d] *= g;

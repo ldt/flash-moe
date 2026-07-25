@@ -4036,6 +4036,21 @@ static void fused_layer_forward(
     LayerWeightCache *lc = &layer_cache[layer_idx];
     int is_full = (kv != NULL);
 
+    // Query-head count, rotary width and gate width can all vary per layer.
+    // NUM_ATTN_HEADS / ROTARY_DIM are the maxima used to size buffers.
+    const int nheads = ARCH_LAYER_NUM_HEADS(layer_idx);
+    const int rotary_dim = ARCH_LAYER_ROTARY_DIM(layer_idx);
+#if ARCH_GATE_FUSED_IN_QPROJ
+    const int gate_dim = nheads * HEAD_DIM;
+    const int q_proj_dim_l = nheads * HEAD_DIM * 2;
+#elif ARCH_ATTN_GATE == ARCH_GATE_HEAD_SOFTPLUS
+    const int gate_dim = nheads;
+    const int q_proj_dim_l = nheads * HEAD_DIM;
+#else
+    const int gate_dim = 0;
+    const int q_proj_dim_l = nheads * HEAD_DIM;
+#endif
+
     // =====================================================================
     // PHASE 1: Deferred completion + CMD1 (attention projections)
     // =====================================================================
@@ -4047,7 +4062,7 @@ static void fused_layer_forward(
     float *qkv_out = NULL, *z_out = NULL, *beta_out = NULL, *alpha_out = NULL;
 
     if (is_full) {
-        int q_proj_dim = ARCH_Q_PROJ_DIM;
+        int q_proj_dim = q_proj_dim_l;
         int kv_dim = NUM_KV_HEADS * HEAD_DIM;
 
         q_proj_out = s_q_proj_out;
@@ -4064,7 +4079,7 @@ static void fused_layer_forward(
             // Per-head output gate lives in its own small projection.
             if (lc->ag_w && lc->ag_s && lc->ag_b) {
                 attn_specs[3] = (BatchMatvecSpec){ lc->ag_w, lc->ag_s, lc->ag_b, s_attn_gate_out,
-                                                   (uint32_t)ARCH_GATE_DIM, HIDDEN_DIM, GROUP_SIZE, 3 };
+                                                   (uint32_t)gate_dim, HIDDEN_DIM, GROUP_SIZE, 3 };
                 num_attn_specs = 4;
             }
 #endif
@@ -4489,7 +4504,7 @@ static void fused_layer_forward(
 
     if (is_full) {
         oproj_w = lc->o_w; oproj_s = lc->o_s; oproj_b = lc->o_b;
-        oproj_in_dim = NUM_ATTN_HEADS * HEAD_DIM;
+        oproj_in_dim = nheads * HEAD_DIM;
     } else if (!linear_attn_bypass) {
         oproj_w = lc->out_proj_w; oproj_s = lc->out_proj_s; oproj_b = lc->out_proj_b;
         oproj_in_dim = LINEAR_TOTAL_VALUE;
@@ -4511,14 +4526,14 @@ static void fused_layer_forward(
 
     if (is_full) {
         // ---- Full attention CPU compute ----
-        int q_dim = NUM_ATTN_HEADS * HEAD_DIM;
+        int q_dim = nheads * HEAD_DIM;
         int kv_dim = NUM_KV_HEADS * HEAD_DIM;
 
         float *q = s_q;
         float *q_gate = s_q_gate;
 #if ARCH_GATE_FUSED_IN_QPROJ
         // q_proj emits [q | gate] per head — split them apart.
-        for (int h = 0; h < NUM_ATTN_HEADS; h++) {
+        for (int h = 0; h < nheads; h++) {
             float *src = q_proj_out + h * (2 * HEAD_DIM);
             memcpy(q + h * HEAD_DIM, src, HEAD_DIM * sizeof(float));
             memcpy(q_gate + h * HEAD_DIM, src + HEAD_DIM, HEAD_DIM * sizeof(float));
@@ -4527,8 +4542,8 @@ static void fused_layer_forward(
         // q_proj emits q only; the gate (if any) comes from its own
         // projection, already written to s_attn_gate_out by CMD1.
         memcpy(q, q_proj_out, q_dim * sizeof(float));
-        if (ARCH_GATE_DIM > 0) {
-            memcpy(q_gate, s_attn_gate_out, ARCH_GATE_DIM * sizeof(float));
+        if (gate_dim > 0) {
+            memcpy(q_gate, s_attn_gate_out, gate_dim * sizeof(float));
         }
 #endif
 
@@ -4536,7 +4551,7 @@ static void fused_layer_forward(
         uint16_t *qnorm_w = lc->q_norm_w;
         uint16_t *knorm_w = lc->k_norm_w;
         if (qnorm_w) {
-            for (int h = 0; h < NUM_ATTN_HEADS; h++) {
+            for (int h = 0; h < nheads; h++) {
                 float *qh = q + h * HEAD_DIM;
                 float sum_sq = 0.0f;
                 for (int i = 0; i < HEAD_DIM; i++) sum_sq += qh[i] * qh[i];
@@ -4556,7 +4571,7 @@ static void fused_layer_forward(
 
         // RoPE — global layers may use long-context scaled frequencies,
         // sliding-window layers never do.
-        apply_rotary_emb(q, k_out, pos, NUM_ATTN_HEADS, NUM_KV_HEADS, HEAD_DIM, ROTARY_DIM,
+        apply_rotary_emb(q, k_out, pos, nheads, NUM_KV_HEADS, HEAD_DIM, rotary_dim,
                          ARCH_ROPE_TABLE(layer_idx));
 
         int fa_idx = ARCH_ATTN_IDX(layer_idx);
@@ -4604,7 +4619,7 @@ static void fused_layer_forward(
         gpu_attn_len = attn_len;
 
         // Scaled dot-product attention (GQA) — GPU or CPU
-        int heads_per_kv = NUM_ATTN_HEADS / NUM_KV_HEADS;
+        int heads_per_kv = nheads / NUM_KV_HEADS;
         float scale = 1.0f / sqrtf((float)HEAD_DIM);
         float *attn_out = s_attn_out;
         memset(attn_out, 0, q_dim * sizeof(float));
@@ -4617,14 +4632,14 @@ static void fused_layer_forward(
         if (gpu_attn_ready) {
             // Copy Q and gate to GPU; attention dispatches will be in CMD2
             memcpy([g_metal->buf_attn_q contents], q, q_dim * sizeof(float));
-            if (ARCH_GATE_DIM > 0) {
+            if (gate_dim > 0) {
                 memcpy([g_metal->buf_attn_gate contents], q_gate,
-                       ARCH_GATE_DIM * sizeof(float));
+                       gate_dim * sizeof(float));
             }
             // attn_out_for_oproj will be set to NULL below — CMD2 reads buf_attn_out
         } else {
             // CPU fallback
-            for (int h = 0; h < NUM_ATTN_HEADS; h++) {
+            for (int h = 0; h < nheads; h++) {
                 int kv_h = h / heads_per_kv;
                 float *qh = q + h * HEAD_DIM;
                 float *scores = malloc(attn_len * sizeof(float));
@@ -4642,7 +4657,7 @@ static void fused_layer_forward(
                 }
                 free(scores);
             }
-            arch_apply_attn_gate(attn_out, q_gate);
+            arch_apply_attn_gate(attn_out, q_gate, nheads);
         }
 
         if (gpu_attn_ready) {
@@ -4891,7 +4906,7 @@ static void fused_layer_forward(
         if (gpu_attn_fuse) {
             int fa_idx = ARCH_ATTN_IDX(layer_idx);
             int kv_dim = NUM_KV_HEADS * HEAD_DIM;
-            int heads_per_kv = NUM_ATTN_HEADS / NUM_KV_HEADS;
+            int heads_per_kv = nheads / NUM_KV_HEADS;
             float scale = 1.0f / sqrtf((float)HEAD_DIM);
             uint32_t hd = HEAD_DIM;
             uint32_t kvd = (uint32_t)kv_dim;
@@ -4917,7 +4932,7 @@ static void fused_layer_forward(
                 [enc setBytes:&scale     length:4 atIndex:7];
                 [enc setBytes:&hpkv      length:4 atIndex:8];
                 [enc setBytes:&sl        length:4 atIndex:9];
-                uint32_t total_tgs = sl * NUM_ATTN_HEADS;
+                uint32_t total_tgs = sl * (uint32_t)nheads;
                 [enc dispatchThreadgroups:MTLSizeMake(total_tgs, 1, 1)
                     threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
                 [enc endEncoding];
@@ -4929,7 +4944,7 @@ static void fused_layer_forward(
                 [enc setBuffer:g_metal->buf_attn_scores offset:0 atIndex:0];
                 [enc setBytes:&sl         length:4 atIndex:1];
                 [enc setBytes:&seq_stride  length:4 atIndex:2];
-                [enc dispatchThreadgroups:MTLSizeMake(NUM_ATTN_HEADS, 1, 1)
+                [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)nheads, 1, 1)
                     threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
                 [enc endEncoding];
             }
@@ -4945,7 +4960,7 @@ static void fused_layer_forward(
                 [enc setBytes:&sl        length:4 atIndex:5];
                 [enc setBytes:&seq_stride length:4 atIndex:6];
                 [enc setBytes:&hpkv      length:4 atIndex:7];
-                uint32_t total_threads = HEAD_DIM * NUM_ATTN_HEADS;
+                uint32_t total_threads = HEAD_DIM * (uint32_t)nheads;
                 uint32_t tgs = (total_threads + 255) / 256;
                 [enc dispatchThreadgroups:MTLSizeMake(tgs, 1, 1)
                     threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
@@ -4955,7 +4970,7 @@ static void fused_layer_forward(
             // or per head depending on the model)
 #if ARCH_ATTN_GATE != ARCH_GATE_NONE
             {
-                uint32_t qdim = NUM_ATTN_HEADS * HEAD_DIM;
+                uint32_t qdim = (uint32_t)nheads * HEAD_DIM;
                 uint32_t hdim = HEAD_DIM;
                 id<MTLComputeCommandEncoder> enc = [cmd_fused computeCommandEncoder];
                 [enc setComputePipelineState:g_metal->attn_gate_pipe];

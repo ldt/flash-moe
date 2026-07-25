@@ -4,7 +4,10 @@
       "Bash(gh pr:*)",
       "Bash(git apply:*)",
       "Bash(time ./infer --prompt \"the best way to make a cup of tea?\" --tokens 20 --k 4 --timing)",
-      "Bash(uv run *)"
+      "Bash(uv run *)",
+      "Bash(make MODEL=laguna_s)",
+      "Bash(awk '{print $5}')",
+      "Bash(make)"
     ]
   }
 }
