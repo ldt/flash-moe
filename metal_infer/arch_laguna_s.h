@@ -1,45 +1,60 @@
-// arch_laguna_s.h — poolside Laguna S 2.1 (118B total / ~8.5B active) profile.
+// arch_laguna_s.h — poolside Laguna S 2.1 (118B total / ~8.5B active).
 //
-// !! THIS FILE IS A TEMPLATE. REGENERATE IT BEFORE YOU TRUST IT. !!
+// The numbers below are now the REAL ones, read from poolside's config.json
+// (archived at docs/laguna_s_2.1_config.json) and cross-checked against
+// modeling_laguna.py. They are no longer guesses.
 //
-//     uv run metal_infer/gen_arch_header.py
-//         --model <path to the downloaded Laguna S weights>
-//         --output metal_infer/arch_laguna_s.h
+// !! THE ENGINE CANNOT RUN THIS MODEL CORRECTLY YET. !!
 //
-// gen_arch_header.py reads the real config.json, tokenizer_config.json and
-// safetensors shapes and rewrites every number below, then defines
-// ARCH_GENERATED so the build stops warning.
+// Reading the real config surfaced four structural features the port does
+// not implement. Each would silently produce wrong output rather than fail:
 //
-// Provenance of the values as committed:
+//   1. Per-layer head counts. Global layers have 48 query heads, sliding
+//      layers have 72 (config: num_attention_heads_per_layer). NUM_ATTN_HEADS
+//      is a single compile-time constant, so q_proj/o_proj dims and
+//      heads_per_kv are wrong on one of the two layer kinds.
 //
-//   Confirmed from poolside's release material and the model card summaries:
-//     48 layers, 1 global : 3 sliding-window (window 512), 8 KV heads,
-//     head_dim 128, 256 routed experts + 1 shared, top-10 routing with
-//     sigmoid gating and renormalized weights, per-head softplus output
-//     gating, vocab 100352 BPE, YaRN rope factor 128 with
-//     attention_factor 1.4852030263919618 on the global layers.
+//   2. Per-layer rope. Global: theta 500000, YaRN factor 128,
+//      partial_rotary 0.5 (rotary_dim 64). Sliding: theta 10000, no scaling,
+//      partial_rotary 1.0 (rotary_dim 128). arch_runtime.h has two frequency
+//      tables but they share one ROPE_THETA and one ROTARY_DIM.
 //
-//   Derived, NOT confirmed (gen_arch_header.py will correct them):
-//     HIDDEN_DIM 4096 and MOE_INTERMEDIATE 768 — the pair that reproduces
-//     both the 118B total parameter count and the ~64 GB size of the 4-bit
-//     MLX conversion. NUM_ATTN_HEADS 32. ROPE_THETA. All token ids.
+//   3. Layer 0 is a dense MLP (intermediate_size 12288), not MoE
+//      (config: mlp_only_layers=[0]). The engine assumes every layer routes
+//      to experts. Only 47 of 48 layers are sparse.
+//
+//   4. Global layers sit at i % 4 == 0 — layer 0 is global — not at
+//      (i+1) % 4 == 0 as ARCH_LAYER_IS_GLOBAL assumes.
+//
+// Smaller deltas, same category:
+//   - routed expert output is scaled by moe_routed_scaling_factor (2.5)
+//     before the shared expert is added;
+//   - the shared expert is added ungated (Qwen applies a sigmoid gate);
+//   - the router adds e_score_correction_bias to the SELECTION scores only,
+//     keeping the returned weights unbiased (zero in this checkpoint, but
+//     part of the architecture).
+//
+// What the port did get right: sliding window 512, per-head softplus output
+// gate via self_attn.g_proj, sigmoid router with renormalized top-10 of 256,
+// YaRN on the global layers, q/k RMSNorm per head, non-interleaved rope
+// pairing, and the 5,308,416-byte packed expert layout.
 
 #ifndef FLASH_MOE_ARCH_LAGUNA_S_H
 #define FLASH_MOE_ARCH_LAGUNA_S_H
 
 #define ARCH_NAME           "Laguna-S-2.1"
 
-#define HIDDEN_DIM          4096
+#define HIDDEN_DIM          3072
 #define NUM_LAYERS          48
-#define NUM_ATTN_HEADS      32
+#define NUM_ATTN_HEADS      72   // SWA layers; global layers use 48 (UNSUPPORTED)
 #define NUM_KV_HEADS        8
 #define HEAD_DIM            128
 #define VOCAB_SIZE          100352
 #define RMS_NORM_EPS        1e-6f
 #define NUM_EXPERTS         256
 #define NUM_EXPERTS_PER_TOK 10
-#define MOE_INTERMEDIATE    768
-#define SHARED_INTERMEDIATE 768
+#define MOE_INTERMEDIATE    1024
+#define SHARED_INTERMEDIATE 1024
 #define FULL_ATTN_INTERVAL  4     // every 4th layer is global, the rest are SWA
 #define GROUP_SIZE          64
 #define BITS                4
@@ -66,8 +81,8 @@
 // RoPE. Global layers use YaRN (factor 128 over an 8192-token base window,
 // which is exactly the 1M advertised context). Sliding-window layers only
 // ever look back 512 tokens, so they use unscaled rope.
-#define ROPE_THETA            1000000.0f   // PLACEHOLDER — regenerate
-#define PARTIAL_ROTARY        1.0f
+#define ROPE_THETA            10000.0f   // SWA layers; global layers use 500000 (UNSUPPORTED)
+#define PARTIAL_ROTARY        1.0f   // SWA layers; global layers use 0.5 (UNSUPPORTED)
 #define ROTARY_DIM            128  // HEAD_DIM * PARTIAL_ROTARY, as an integer literal
 #define ARCH_ROPE_SCALING     ARCH_ROPE_YARN
 #define ARCH_ROPE_YARN_FACTOR 128.0f
@@ -87,7 +102,7 @@
 //            scales/biases [768, 64] bf16   =   98304 B each
 //   down:    [4096, 768] -> 4096*768/2      = 1572864 B
 //            scales/biases [4096, 12] bf16  =   98304 B each
-#define EXPERT_SIZE         5308416
+#define EXPERT_SIZE         5308416  // 3072x1024 at 4-bit, group 64
 
 // 2-bit variant (repack_experts_2bit.py). Kept for experimentation; 2-bit
 // broke JSON/tool calling on Qwen and this is a coding model, so 4-bit is
@@ -112,15 +127,15 @@
 #define GPU_KV_SEQ  8192
 
 // Special tokens — PLACEHOLDERS, regenerate before use.
-#define EOS_TOKEN_1         100257
-#define EOS_TOKEN_2         100257
+#define EOS_TOKEN_1         2
+#define EOS_TOKEN_2         24
 #define THINK_START_TOKEN   -1
 #define THINK_END_TOKEN     -1
 
 #define ARCH_DEFAULT_MODEL_DIR "packed_experts_laguna"
 
 #ifndef ARCH_GENERATED
-#warning "arch_laguna_s.h holds placeholder values (see header comment). Run gen_arch_header.py against your downloaded weights before trusting the output."
+#warning "Laguna S support is INCOMPLETE: per-layer head counts, per-layer rope, the dense layer 0 and the global-layer phase are not implemented. See the comment at the top of arch_laguna_s.h. Output will be wrong."
 #endif
 
 #endif  // FLASH_MOE_ARCH_LAGUNA_S_H

@@ -229,7 +229,50 @@ Verified here:
   (~300 GB/s vs the 40-core's ~400). Your SSD's sequential read matters as
   much as the GPU here — measure it before trusting the estimate.
 
-## 7. Two things the port does not cover yet
+## 7. Status after reading the real config
+
+poolside's `config.json` (archived at `docs/laguna_s_2.1_config.json`) and
+`modeling_laguna.py` were read directly. Two of the inferred constants were
+wrong — `hidden_size` is **3072**, not 4096, and `moe_intermediate_size` is
+**1024**, not 768. They happen to multiply out to the same 5,308,416-byte
+expert, so the disk and I/O arithmetic in §1 stands unchanged; the header now
+carries the real values.
+
+More importantly, four structural features turned up that the port does not
+implement, and each would produce wrong output rather than an error:
+
+1. **Per-layer head counts** — 48 query heads on global layers, 72 on sliding
+   ones (`num_attention_heads_per_layer`). `NUM_ATTN_HEADS` is one
+   compile-time constant, so `q_proj`/`o_proj` dims and `heads_per_kv` are
+   wrong on one of the two kinds.
+2. **Per-layer rope** — global: theta 500000, YaRN ×128, partial rotary 0.5
+   (rotary_dim 64); sliding: theta 10000, unscaled, partial rotary 1.0
+   (rotary_dim 128). `arch_runtime.h` has two frequency tables, but they share
+   one `ROPE_THETA` and one `ROTARY_DIM`.
+3. **Layer 0 is a dense MLP** (`mlp_only_layers: [0]`, intermediate 12288),
+   not MoE. Only 47 of 48 layers route to experts.
+4. **Global layers are at `i % 4 == 0`** — layer 0 is global — not at
+   `(i+1) % 4 == 0`. `gen_arch_header.py` correctly refuses this pattern
+   today; it needs a phase offset.
+
+Smaller, same category: routed expert output is scaled by 2.5
+(`moe_routed_scaling_factor`) before the shared expert is added; the shared
+expert is added **ungated**, where Qwen applies a sigmoid gate; and the router
+adds `e_score_correction_bias` to the selection scores only (zero in this
+checkpoint, but part of the architecture).
+
+What the port did get right, confirmed against the reference implementation:
+sliding window 512, per-head softplus gate via `self_attn.g_proj`, sigmoid
+router with renormalized top-10 of 256, YaRN on global layers, per-head q/k
+RMSNorm, non-interleaved rope pairing, and the packed expert layout.
+
+The engine builds (`make MODEL=laguna_s`) and the Qwen path is verified
+unchanged — token-for-token identical output against the pre-refactor binary
+on a 40-token generation. The above is the remaining work.
+
+---
+
+## 8. Two integration gaps
 
 Both surfaced from poolside's release material after the engine work, and
 neither blocks generating tokens — they block *using* the model the way it
@@ -254,7 +297,7 @@ also ship an FP8 KV cache; flash-moe keeps KV in fp32, which is why §4 budgets
 
 ---
 
-## 8. If you want something running tonight
+## 9. If you want something running tonight
 
 The port needs a build and a 64 GB download before it produces a token. Two
 things work immediately:
