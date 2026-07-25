@@ -229,7 +229,32 @@ Verified here:
   (~300 GB/s vs the 40-core's ~400). Your SSD's sequential read matters as
   much as the GPU here — measure it before trusting the estimate.
 
-## 7. If you want something running tonight
+## 7. Two things the port does not cover yet
+
+Both surfaced from poolside's release material after the engine work, and
+neither blocks generating tokens — they block *using* the model the way it
+expects to be used.
+
+**Tool calling uses poolside's own XML protocol** (`poolside_v1`), with
+thinking blocks interleaved between tool calls and toggled per request via
+`enable_thinking`. `chat.m` parses Qwen's Hermes-style
+`<tool_call>{"name":…,"arguments":{…}}</tool_call>` — the XML wrapper happens
+to look similar, but the body is poolside's format, not that JSON object. The
+parser in `chat.m` (around the `<tool_call>` scan) needs a second variant
+before agentic use works. Plain completion and chat are unaffected.
+
+**The quantized checkpoints are configured for 256K context, not 1M.** Only
+the BF16 checkpoint carries the full 1,048,576. That means the YaRN factor in
+the 4-bit config is probably 32 (256K / 8192), not the 128 quoted for BF16 —
+`gen_arch_header.py` reads whatever the checkpoint actually declares, so the
+generated header will be right either way, but do not be surprised when the
+printed rope summary disagrees with the launch blog. The quantized releases
+also ship an FP8 KV cache; flash-moe keeps KV in fp32, which is why §4 budgets
+~800 MB for 8k of context rather than a quarter of that.
+
+---
+
+## 8. If you want something running tonight
 
 The port needs a build and a 64 GB download before it produces a token. Two
 things work immediately:
