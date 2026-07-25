@@ -2704,6 +2704,12 @@ static void moe_forward(
     float expert_weights[64];
     cpu_topk(gate_scores, NUM_EXPERTS, K, expert_indices, expert_weights);
     cpu_normalize_weights(expert_weights, K);
+    // Routed experts may be scaled before the shared expert is added
+    // (Laguna S: moe_routed_scaling_factor = 2.5). Folding the factor into
+    // the routing weights makes every downstream combine path inherit it.
+    if (ARCH_ROUTED_SCALING != 1.0f) {
+        for (int k = 0; k < K; k++) expert_weights[k] *= ARCH_ROUTED_SCALING;
+    }
 
     if (moe_dump) {
         fprintf(stderr, "[MOE-DUMP] routing: K=%d experts=[", K);
@@ -2816,7 +2822,7 @@ static void moe_forward(
     }
 
     // ---- Shared expert gate (sigmoid) -- already computed above ----
-    float shared_weight = cpu_sigmoid(shared_gate_score);
+    float shared_weight = ARCH_SHARED_EXPERT_GATED ? cpu_sigmoid(shared_gate_score) : 1.0f;
 
     // Scale shared expert output
     for (int i = 0; i < HIDDEN_DIM; i++) {
@@ -3881,8 +3887,9 @@ static void finalize_deferred_experts(void) {
         float shared_out[HIDDEN_DIM];
         memcpy(shared_out, [g_metal->buf_shared_out contents], HIDDEN_DIM * sizeof(float));
 
-        // Apply shared expert gate
-        float shared_weight = cpu_sigmoid(g_deferred.shared_gate_score);
+        // Apply shared expert gate (models that gate it; Laguna S does not)
+        float shared_weight = ARCH_SHARED_EXPERT_GATED
+                            ? cpu_sigmoid(g_deferred.shared_gate_score) : 1.0f;
         for (int i = 0; i < HIDDEN_DIM; i++) {
             shared_out[i] *= shared_weight;
         }
@@ -5131,6 +5138,12 @@ static void fused_layer_forward(
     float expert_weights[64];
     cpu_topk(gate_scores, NUM_EXPERTS, K, expert_indices, expert_weights);
     cpu_normalize_weights(expert_weights, K);
+    // Routed experts may be scaled before the shared expert is added
+    // (Laguna S: moe_routed_scaling_factor = 2.5). Folding the factor into
+    // the routing weights makes every downstream combine path inherit it.
+    if (ARCH_ROUTED_SCALING != 1.0f) {
+        for (int k = 0; k < K; k++) expert_weights[k] *= ARCH_ROUTED_SCALING;
+    }
     if (g_freq_tracking) {
         for (int k = 0; k < K; k++) {
             g_expert_freq[layer_idx][expert_indices[k]]++;
@@ -5468,6 +5481,7 @@ static void fused_layer_forward(
                     params[k] = valid[k] ? expert_weights[k] : 0.0f;
                 }
                 params[8] = shared_gate_score;
+                params[9] = ARCH_SHARED_EXPERT_GATED ? 1.0f : 0.0f;
             }
 
             // Enc C1: moe_combine_residual

@@ -1319,15 +1319,18 @@ kernel void moe_combine_residual(
     device const float* expert_out5 [[buffer(8)]],   // [dim] expert 5
     device const float* expert_out6 [[buffer(9)]],   // [dim] expert 6
     device const float* expert_out7 [[buffer(10)]],  // [dim] expert 7
-    device const float* params      [[buffer(11)]],  // [10]: weights[0..7], shared_gate_score, (unused)
+    device const float* params      [[buffer(11)]],  // [10]: weights[0..7], shared_gate_score, shared_gate_mode
     constant uint&      dim         [[buffer(12)]],
     constant uint&      K           [[buffer(13)]],
     uint tid [[thread_position_in_grid]]
 ) {
     if (tid >= dim) return;
 
-    // Read expert weights and shared gate from params buffer
-    float shared_gate = 1.0f / (1.0f + exp(-params[8]));  // sigmoid(shared_gate_score)
+    // Read expert weights and shared gate from params buffer.
+    // params[9] selects how the shared expert is combined: non-zero means it
+    // carries a sigmoid gate (Qwen3.5), zero means it is added ungated
+    // (Laguna S).
+    float shared_gate = (params[9] != 0.0f) ? (1.0f / (1.0f + exp(-params[8]))) : 1.0f;
 
     // Weighted sum of expert outputs
     float moe = 0.0f;
