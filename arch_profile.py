@@ -31,13 +31,16 @@ BUILTIN = {
             r'((?:gate|up|down)_proj\.(?:weight|scales|biases))$',
     },
     "laguna_s": {
+        # Real values from poolside's config.json (docs/laguna_s_2.1_config.json).
+        # Layer 0 is a dense MLP, so only layers 1..47 carry routed experts.
         "name": "Laguna-S-2.1",
         "num_layers": 48,
         "num_experts": 256,
-        "hidden": 4096,
-        "moe_intermediate": 768,
+        "hidden": 3072,
+        "moe_intermediate": 1024,
         "group_size": 64,
         "bits": 4,
+        "dense_layers": [0],
         # mlx-lm fuses the routed experts into a single switch_mlp tensor. The
         # optional prefix covers both plain and multimodal-style naming.
         "expert_pattern":

@@ -1,0 +1,2637 @@
+{
+  "model_path": "/Users/laurent/models/laguna-s-mlx-4bit",
+  "expert_reads": {
+    "1": {
+      "down_proj.biases": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 3638722330,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 4797013530,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 3706853914,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 3156404506,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 3181570330,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 1898211610,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 4858558490,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 3613556506,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 2753554714,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "2": {
+      "down_proj.biases": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 4833392666,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 920952090,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 946117914,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 1400675610,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 1451891994,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 1477156122,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 1348771098,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 1373936922,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 2329176346,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "3": {
+      "down_proj.biases": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 811378714,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 4767400730,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 3209127450,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 1425841434,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 4915715610,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 4940881434,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 2302437658,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 836544538,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 4344295450,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "4": {
+      "down_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 5163749850,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 4256600538,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 4710666714,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 861710874,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 4123761178,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 21018,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 5138584026,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 2236283098,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00001-of-00013.safetensors",
+        "abs_offset": 403707418,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "5": {
+      "down_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 3739361242,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 4216259034,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 2443945434,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 2846598618,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 2286829786,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 2897815514,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 2379285978,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 2404623834,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 3765411802,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "6": {
+      "down_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 2871764442,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 2261565658,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 4307030490,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 4281864666,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 5113418202,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 3336497626,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 1755538138,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 1780703962,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 1805869786,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "7": {
+      "down_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 477841626,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 3309734106,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 503007450,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 2211117274,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 4188635610,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 1333577946,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 2341314778,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 905660634,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 930924762,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "8": {
+      "down_proj.biases": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 4684026097,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 4616189425,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 2346260209,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 19418,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 439005402,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00002-of-00013.safetensors",
+        "abs_offset": 25185242,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 4571706865,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 4710961393,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 3269158897,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "9": {
+      "down_proj.biases": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 2270048497,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 2775856369,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 3681249265,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 2298661617,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 1331305969,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 4736225521,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 2815177969,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 1302773233,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 4111243249,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "10": {
+      "down_proj.biases": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 4641453553,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 1359027697,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 1867284721,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 1410932209,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 4084013041,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 1436196337,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 1385766385,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 1840422385,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 2865522673,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "11": {
+      "down_proj.biases": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 4514977777,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 15180273,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 493330929,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 2750683377,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 468165105,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 895984113,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 40346097,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 2840356849,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00003-of-00013.safetensors",
+        "abs_offset": 65511921,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "12": {
+      "down_proj.biases": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 4247786616,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 1951710840,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 1523891832,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 3737957496,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 3310034040,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 3335199864,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 981196408,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 3777303672,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 4273050744,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "13": {
+      "down_proj.biases": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 1495580280,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 5082696312,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 3816625272,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 1976876664,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 1008944248,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 2900559480,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 1926545016,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 2002042488,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 4680036216,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "14": {
+      "down_proj.biases": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 123935608,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 149101432,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 175840120,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 1034994808,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 1063331192,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 1088798328,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 2874508920,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 84202360,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 578493304,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "15": {
+      "down_proj.biases": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 5113712907,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 985932043,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 4631131403,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 25181304,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 50347128,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 2470172280,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 15480,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 2027214456,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00004-of-00013.safetensors",
+        "abs_offset": 2067519096,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "16": {
+      "down_proj.biases": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 4113906443,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 4572818699,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 2879109131,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 4598494475,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 4087068939,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 3684415755,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 1011097867,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 5088547083,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 3281762571,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "17": {
+      "down_proj.biases": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 935600395,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 960766219,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 1957416203,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 1464082955,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 5061611275,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 1503404555,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 4545883403,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 1036263691,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 1061429771,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "18": {
+      "down_proj.biases": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 909930507,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 23467019,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 502755339,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 2361482507,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 2389235723,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 99849227,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 48632843,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 73798667,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 4139121419,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "19": {
+      "down_proj.biases": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 5113614327,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 3774602231,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 3805481975,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 2448629259,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 5036341003,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00005-of-00013.safetensors",
+        "abs_offset": 2475367947,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 2300467191,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 5057777399,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 4626713591,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "20": {
+      "down_proj.biases": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 2352470007,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 2377640439,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 2816494327,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 3234981367,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 3260246007,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 3335866359,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 3310675959,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 5029465079,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 2412342007,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "21": {
+      "down_proj.biases": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 3748158455,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 964911607,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 990175735,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 2253421559,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 3285411831,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 1834803703,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 1392828919,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 2325633015,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 1417994743,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "22": {
+      "down_proj.biases": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 939745783,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 7172087,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 32337911,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 883011575,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 5082943223,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 460156919,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 910733303,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 434991095,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00006-of-00013.safetensors",
+        "abs_offset": 4224060407,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "23": {
+      "down_proj.biases": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 901330351,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 3358691247,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 4643334319,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 5045987503,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2315771055,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 4213156015,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2887323567,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 5071153327,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 3407849647,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "24": {
+      "down_proj.biases": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2290605231,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2236971183,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2483680943,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 1758802095,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2430375599,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2941882287,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2262137007,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 1788403887,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 1829298351,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "25": {
+      "down_proj.biases": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 4618168495,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2455541423,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 928168111,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 1733474479,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2341035695,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 3810502831,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2392325807,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2915143599,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 1330821295,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "26": {
+      "down_proj.biases": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 1939655829,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 5112133269,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 4280579477,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 2367159983,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 402668719,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 427834543,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 848331951,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 876164271,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00007-of-00013.safetensors",
+        "abs_offset": 15535,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "27": {
+      "down_proj.biases": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 1836598421,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 2490367125,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 3420321173,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 5086869141,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 2465102997,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 2515533461,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 1992838293,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 2970880149,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 2060471445,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "28": {
+      "down_proj.biases": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 1757905301,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 1784643989,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 4684117653,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 2943358613,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 4255315349,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 2997625749,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 2918192789,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 1809809813,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 3823859093,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "29": {
+      "down_proj.biases": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 462294165,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 2019576981,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 489032853,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 1911344277,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 891686037,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 916851861,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 1884298389,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 4226610581,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 1340598677,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "30": {
+      "down_proj.biases": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 3799080173,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 3825818861,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 4331888109,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 1965509781,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 437030037,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00008-of-00013.safetensors",
+        "abs_offset": 19349,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 519891181,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 2885210349,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 2456506605,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "31": {
+      "down_proj.biases": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 2431230189,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 1966090221,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 2938786029,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 2913620205,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 2003249645,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 2028415469,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 3902987501,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 1505912045,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 1563437037,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "32": {
+      "down_proj.biases": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 573049069,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 598221037,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 623386861,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 1453958125,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 545057005,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 4736225517,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 1026138349,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 1480721645,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 1051304173,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "33": {
+      "down_proj.biases": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 2860044525,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 8745453,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 33911277,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 3852655853,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 3877821677,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 3358863597,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 436564461,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 475886061,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00009-of-00013.safetensors",
+        "abs_offset": 3929038317,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "34": {
+      "down_proj.biases": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 1472685727,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 4188131487,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 4213321887,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 5018628255,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 540233631,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 4615975071,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 5069549727,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 5044383903,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 631596703,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "35": {
+      "down_proj.biases": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 2306807967,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 2357139615,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 1034249887,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 3659293599,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 3704611999,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 3731091615,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 2396662431,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 2421926559,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 2447682207,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "36": {
+      "down_proj.biases": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 489901983,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 515067807,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 3256640415,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 4137603231,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 1437197983,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 1497851551,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 565399455,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 590565279,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 2850335391,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "37": {
+      "down_proj.biases": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 4161207563,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 1036961547,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 4255014155,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 2331973791,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 4162867359,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 25181343,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 446353311,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 15519,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00010-of-00013.safetensors",
+        "abs_offset": 1900812447,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "38": {
+      "down_proj.biases": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 2868016395,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 4202200331,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 2425033483,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 5087661835,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 4657876491,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 2919927819,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 2841940747,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 2893182219,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 3755088395,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "39": {
+      "down_proj.biases": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 1942955787,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 959891211,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 3350857483,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 1489946379,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 1917765387,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 1087293195,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 985057035,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 1062127371,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 2020414219,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "40": {
+      "down_proj.biases": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 1010222859,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 33873931,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 1515112203,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 512122891,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 1989442315,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 537288715,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 59039755,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 84303883,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 109469707,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "41": {
+      "down_proj.biases": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 5086974191,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3056871151,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3807920879,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 5112827659,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 4227464459,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00011-of-00013.safetensors",
+        "abs_offset": 4683238923,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 5113712879,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3778613999,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3242310127,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "42": {
+      "down_proj.biases": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3162751215,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3189496047,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 4684314095,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3107405551,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3672121071,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 4228085231,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3738996975,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 897657583,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 2637401071,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "43": {
+      "down_proj.biases": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3135717103,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 2206116335,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 925772783,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3217144303,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 1731079151,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 1756441839,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3082043119,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 2161675759,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 1328425967,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "44": {
+      "down_proj.biases": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 4659148271,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 5205999,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 2234452975,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 4632311279,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3697316079,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 458190831,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 3645061615,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 30371823,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00012-of-00013.safetensors",
+        "abs_offset": 55537647,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "45": {
+      "down_proj.biases": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 2442249366,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 156942742,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 3018042774,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 1568971926,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 2965639830,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 2562986646,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 2991690390,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 1139154838,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 3456380310,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "46": {
+      "down_proj.biases": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 686170006,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 711335830,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 736501654,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 2510970006,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 4313689494,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 1165205654,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 3859131798,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 1595919510,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 2039596182,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    },
+    "47": {
+      "down_proj.biases": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 3431214486,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.scales": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 2485804182,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "down_proj.weight": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 251640214,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "gate_proj.biases": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 210622870,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.scales": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 2536234134,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "gate_proj.weight": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 1636813974,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      },
+      "up_proj.biases": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 3884297622,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.scales": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 185358742,
+        "expert_stride": 98304,
+        "expert_size": 98304
+      },
+      "up_proj.weight": {
+        "file": "model-00013-of-00013.safetensors",
+        "abs_offset": 3911036310,
+        "expert_stride": 1572864,
+        "expert_size": 1572864
+      }
+    }
+  }
+}

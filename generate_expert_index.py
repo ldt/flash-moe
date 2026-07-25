@@ -27,16 +27,22 @@ _PROFILE = load_profile()
 COMPONENT_SIZES = {c["name"]: c["size"] for c in _PROFILE["components"]}
 NUM_EXPERTS = _PROFILE["num_experts"]
 NUM_LAYERS = _PROFILE["num_layers"]
+# Layers with a dense MLP instead of routed experts (Laguna S: layer 0).
+DENSE_LAYERS = set(_PROFILE.get("dense_layers", []))
+SPARSE_LAYERS = [i for i in range(NUM_LAYERS) if i not in DENSE_LAYERS]
 EXPERT_PATTERN = re.compile(_PROFILE["expert_pattern"])
 
 
 def _select_arch(arch):
     """Re-point the module globals at another architecture profile."""
     global _PROFILE, COMPONENT_SIZES, NUM_EXPERTS, NUM_LAYERS, EXPERT_PATTERN
+    global DENSE_LAYERS, SPARSE_LAYERS
     _PROFILE = load_profile(arch)
     COMPONENT_SIZES = {c["name"]: c["size"] for c in _PROFILE["components"]}
     NUM_EXPERTS = _PROFILE["num_experts"]
     NUM_LAYERS = _PROFILE["num_layers"]
+    DENSE_LAYERS = set(_PROFILE.get("dense_layers", []))
+    SPARSE_LAYERS = [i for i in range(NUM_LAYERS) if i not in DENSE_LAYERS]
     EXPERT_PATTERN = re.compile(_PROFILE["expert_pattern"])
     print(describe(_PROFILE))
 
@@ -86,9 +92,11 @@ def main():
 
     print(f"Model: {model_path}")
     print(f"Found {len(expert_tensors)} expert tensors")
-    print(f"Expected: {NUM_LAYERS * len(COMPONENT_SIZES)} = {NUM_LAYERS} layers x {len(COMPONENT_SIZES)} components")
+    print(f"Expected: {len(SPARSE_LAYERS) * len(COMPONENT_SIZES)} = "
+          f"{len(SPARSE_LAYERS)} sparse layers x {len(COMPONENT_SIZES)} components"
+          + (f" ({sorted(DENSE_LAYERS)} are dense MLP)" if DENSE_LAYERS else ""))
 
-    if len(expert_tensors) != NUM_LAYERS * len(COMPONENT_SIZES):
+    if len(expert_tensors) != len(SPARSE_LAYERS) * len(COMPONENT_SIZES):
         print("WARNING: tensor count mismatch", file=sys.stderr)
 
     # Parse safetensors headers for all needed files
@@ -142,7 +150,7 @@ def main():
 
     # Verify completeness
     complete = True
-    for layer_idx in range(NUM_LAYERS):
+    for layer_idx in SPARSE_LAYERS:
         layer_key = str(layer_idx)
         if layer_key not in expert_reads:
             print(f"ERROR: layer {layer_idx} missing entirely", file=sys.stderr)
