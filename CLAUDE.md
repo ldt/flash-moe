@@ -19,6 +19,13 @@ The entire 209GB model streams from SSD through a custom Metal compute pipeline.
 
 *2-bit quantization produces `\name\` instead of `"name"` in JSON output, making tool calling unreliable. 4-bit is the production configuration.
 
+## Work in progress: DeepSeek-V4.1-Flash
+
+Branch `claude/deepseek-v4-flash-m3-7bqkms` holds the groundwork for porting the engine to
+**DeepSeek-V4.1-Flash** (552B backbone + 196B Engram, 16B active per decode token, MXFP4 experts).
+Verdict, exact disk/RAM budget for a 36 GB M3 Max, and the phased plan:
+[docs/deepseek-v41-flash-plan.md](docs/deepseek-v41-flash-plan.md). Tooling: [deepseek_v41/](deepseek_v41/).
+
 ## Hardware
 
 - **Machine**: MacBook Pro, Apple M3 Max
@@ -110,6 +117,10 @@ metal_infer/
 
 generate_expert_index.py  # Creates expert_index.json from safetensors headers (uv run)
 repack_experts.py      # 4-bit expert packing from safetensors (uv run)
+deepseek_v41/          # DeepSeek-V4.1-Flash port groundwork (budget, expert index, Engram export)
+docs/deepseek-v41-flash-plan.md  # Feasibility + phased plan for DeepSeek-V4.1-Flash on 36 GB
+metal_infer/ds41_ops.h        # CPU reference ops for V4.1 (MXFP4/FP8 dequant, routing, mHC, Engram)
+metal_infer/shaders_ds41.metal  # Draft Metal kernels for V4.1 formats (not yet compiled on a Mac)
 progress.py            # Results visualization (Q2/Q4 tracks) (uv run)
 results.tsv            # Experiment log (58 experiments)
 ```

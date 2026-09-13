@@ -35,3 +35,11 @@ logs/
 metal_infer/test_lzfse
 metal_infer/repack_experts_lz4
 metal_infer/routing_data.bin
+
+# DeepSeek-V4.1-Flash groundwork (generated / test binaries)
+metal_infer/test_ds41
+metal_infer/ds41_dense.bin
+metal_infer/ds41_dense.json
+metal_infer/ds41_engram_meta.bin
+ds41_headers/
+ds41_expert_index.json

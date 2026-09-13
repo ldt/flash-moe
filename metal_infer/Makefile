@@ -38,7 +38,7 @@ INFER_SRC = infer.m
 CHAT_TARGET = chat
 CHAT_SRC = chat.m
 
-.PHONY: all clean run verify bench moe moebench full fullbench fast metallib infer infer-run chat-run build-chat
+.PHONY: all clean run verify bench moe moebench full fullbench fast metallib infer infer-run chat-run build-chat test-ds41
 
 all: $(TARGET) $(INFER_TARGET)
 
@@ -63,8 +63,17 @@ $(INFER_TARGET): $(INFER_SRC)
 $(CHAT_TARGET): $(CHAT_SRC) linenoise.c linenoise.h
 	$(CC) -O2 -Wall -fobjc-arc -framework Foundation $(CHAT_SRC) linenoise.c -o $(CHAT_TARGET)
 
+# DeepSeek-V4.1-Flash groundwork: CPU reference ops + unit tests (portable C, no Metal)
+# See docs/deepseek-v41-flash-plan.md
+DS41_TEST = test_ds41
+$(DS41_TEST): test_ds41.c ds41_ops.h
+	$(CC) -O2 -std=c11 -Wall -Wextra test_ds41.c -lm -o $(DS41_TEST)
+
+test-ds41: $(DS41_TEST)
+	./$(DS41_TEST)
+
 clean:
-	rm -f $(TARGET) $(INFER_TARGET) $(CHAT_TARGET) $(SHADER_AIR) $(SHADER_LIB)
+	rm -f $(TARGET) $(INFER_TARGET) $(CHAT_TARGET) $(SHADER_AIR) $(SHADER_LIB) $(DS41_TEST)
 
 # Run targets
 run: $(TARGET)
