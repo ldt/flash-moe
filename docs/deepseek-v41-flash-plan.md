@@ -1,5 +1,8 @@
 # Running DeepSeek-V4.1-Flash on a 36 GB M3 Max with Flash-MoE
 
+See also [deepseek-v41-50-toks-options.md](deepseek-v41-50-toks-options.md) for what reaches
+50+ tok/s today with other software stacks (multi-GPU rigs), with published numbers.
+
 Status: **groundwork on branch `claude/deepseek-v4-flash-m3-7bqkms`**. Everything in
 `deepseek_v41/` and the `ds41_*` files in `metal_infer/` was validated on Linux against the
 official checkpoint metadata and reference code. Nothing has run on a Mac yet; the Metal
