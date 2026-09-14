@@ -22,7 +22,10 @@ It is feasible with the Flash-MoE approach, but it is a **port of the whole engi
 config change**, and the laptop will be I/O-bound harder than with Qwen3.5. Per decode token
 the model needs 40 layers × 6 experts × 18.8 MB = **4.5 GB of expert weights** (Qwen3.5 in
 this repo at K=4: 1.7 GB). With ~21 GB of page cache on a 36 GB machine the honest projection
-is **~2.5 tok/s at K=6, ~3.7 tok/s at K=4**, cold cache ~1.5–2 tok/s. Prefill of a 2 000-token
+is **~1.8 tok/s at K=6, ~2.6 tok/s at K=4**, cold cache ~1.5–2 tok/s. A page-cache hit is not
+free either: with today's `pread()` design it is a ~14 GB/s memcpy into the Metal buffer
+(calibrated on the Qwen run), which is why more RAM alone barely helps until the design goes
+zero-copy (section 4). Prefill of a 2 000-token
 prompt costs ~18 s of SSD reads. Disk: 501 GB for text inference (289 GB experts + 203 GB
 Engram tables + 10 GB dense), read directly from the downloaded shards, no repack. The
 article's "optimized for SSD streaming" refers to DeepSeek's *datacenter* design (KV cache and
@@ -31,7 +34,7 @@ those 8–16 B active parameters still have to come off the SSD every token.
 
 One caveat on the machine: `CLAUDE.md` describes a 48 GB M3 Max; the request says 36 GB.
 Everything below is computed for 36 GB (`ds41_budget.py --ram 48` gives the other case:
-about 33 GB of page cache and ~3 tok/s at K=6).
+about 33 GB of page cache and ~2 tok/s at K=6). Section 4 has the 64 GB / 128 GB M5 Max cases.
 
 ## 2. What DeepSeek-V4.1-Flash actually is (from `inference/model.py`)
 
@@ -89,7 +92,7 @@ Unified memory plan, 36 GB:
 
 Qwen3.5 today runs with 35 GB of cache over 209 GB (16.7 %) and sees ~71 % hits. Expect a
 materially lower hit rate here; the budget script assumes hits scale with the square root of the
-coverage ratio (47 % → 52 %), which is a guess to be replaced by a measurement.
+coverage ratio (47 % at 36 GB), which is a guess to be replaced by a measurement.
 
 Disk on the 1 TB laptop: 501 GB fits only if the Qwen3.5 download **or** its `packed_experts/`
 (209 GB + 218 GB today) goes. Since we read DeepSeek experts straight from the shards there is
@@ -99,12 +102,43 @@ no second copy to make room for; delete the 48 shards' vision/MTP files (8.9 GB)
 
 ```
 decode, K=6:  40 × 6 × 18.80 MB = 4.51 GB expert bytes/token
-              47 % hits → 2.41 GB from SSD @ 8 GB/s = 301 ms
+              47 % hits → 2.41 GB from SSD  @  8 GB/s = 301 ms
+                          2.10 GB from RAM  @ 14 GB/s = 150 ms   (pread copy of cached experts)
               + 40 layers × ~2.2 ms GPU/CPU (serial with SSD on unified memory) = 88 ms
               + Engram 2 × ~1 ms
-              ≈ 391 ms/token → 2.6 tok/s     (cold: 654 ms → 1.5 tok/s)
-decode, K=4, dense 4-bit:  3.01 GB/token, 52 % hits → 269 ms → 3.7 tok/s (cold 2.1)
+              ≈ 541 ms/token → 1.8 tok/s     (cold: 654 ms → 1.5 tok/s; 100 % cached: 412 ms → 2.4)
+decode, K=4:  3.01 GB/token → 391 ms → 2.6 tok/s (cold 2.1, fully cached 3.3)
 ```
+
+The "100 % cached" line is the ceiling of the current design: even with every expert in RAM,
+4.5 GB/token × (1/14 GB/s) = 322 ms goes into copying page-cache pages into Metal buffers. The
+Qwen engine lives with that because its per-token volume is 2.7× smaller.
+
+### More RAM, newer chip (`ds41_budget.py --ram N [--gpu-ms-per-layer 1.5] [--zero-copy]`)
+
+M5 Max assumptions, from Apple's spec page and press measurements: 614 GB/s memory bandwidth
+(vs ~400 on the M3 Max, so the GPU term shrinks to ~1.5 ms/layer), SSD ~13.6 GB/s sustained
+read (no better than the 17.5 GB/s measured on this M3 Max, so the SSD term is unchanged at
+~8 GB/s effective for 18 MB reads).
+
+| RAM | page cache | est. hit rate | pread design, K=6 / K=4 | zero-copy resident experts, K=6 / K=4 |
+|---|---|---|---|---|
+| 36 GB (M3 Max) | 21 GB (7 %) | 47 % | **1.8 / 2.6 tok/s** | not worth it |
+| 48 GB (M3 Max) | 33 GB (11 %) | 59 % | 2.0 / 2.7 | – |
+| 64 GB (M5 Max) | 49 GB (17 %) | 71 % | 2.2 / 3.1 | **4.5 / 5.9** |
+| 128 GB (M5 Max) | 113 GB (39 %) | 85 % | 2.4 / 3.3 | **6.8 / 8.4** (9.3 / 10.9 if hits reach 92 %) |
+
+Reading the table: with the current `pread()`-into-a-scratch-buffer design, going from 36 GB to
+128 GB buys ~0.5 tok/s, because the copy of cached experts replaces the SSD wait almost one for
+one. The RAM only pays off with a **zero-copy resident-expert design**: cached experts stay in
+GPU-visible memory (a page-aligned `mmap` of the shard wrapped with
+`newBufferWithBytesNoCopy`, or a pinned LRU of Metal buffers) so a hit costs nothing but the
+GPU's own ~10 ms/token read at 400–600 GB/s, and only misses touch the SSD. CLAUDE.md records
+that custom caches lost to the page cache on 48 GB (GPU memory pressure, "Trust the OS"); at
+128 GB the trade-off flips because 110 GB of resident experts is 38 % of the model and the
+misses are rare enough that SSD DMA no longer fights the GPU every layer. This is the same
+regime the Latent Space post's "128 GB M5 Max, SSD streaming unexpectedly fast" report was in.
+Prefill is RAM-independent: ~18 s of SSD for a 2 000-token prompt whatever the machine.
 
 Levers, in the order I would try them on the machine:
 
@@ -118,7 +152,10 @@ Levers, in the order I would try them on the machine:
 4. **DSpark** drafting 5 tokens: verification of 5 tokens touches ~5× the experts, so it is
    break-even on I/O like MTP was (CLAUDE.md) unless neighbouring tokens share experts; the
    draft blocks add 7.2 GB of streamed experts. Skip for v1.
-5. What does *not* help: Engram is cheap (48 random 4 KB reads per token, ~13 KB), and the
+5. **Zero-copy resident experts** (`--zero-copy`): the only lever that turns RAM into speed; see the
+   table above. Needs 64 GB or more to matter and contradicts the "Trust the OS" result on 48 GB,
+   so it must be re-measured, not assumed.
+6. What does *not* help: Engram is cheap (48 random 4 KB reads per token, ~13 KB), and the
    attention/indexer compute is small (64 heads × 512 dims × 640 positions per layer).
 
 ## 5. Data pipeline (implemented, validated)
@@ -194,9 +231,10 @@ matched against a reference we cannot run on the laptop.
 
 ## 8. Risks and open questions
 
-- **Performance ceiling.** Even at 100 % page-cache hits the GPU would stream 4.5 GB of expert
-  weights per token: 4.5 GB / 418 GiB/s ≈ 10 ms, fine. The ceiling is the SSD: 4.5 GB at 8 GB/s
-  = 560 ms cold. Only K, hit rate and quantisation move that number.
+- **Performance ceiling.** The GPU side is fine: 4.5 GB of expert weights per token at
+  418 GiB/s ≈ 10 ms. The ceilings are the SSD (4.5 GB at 8 GB/s = 560 ms cold) and, once the
+  cache is warm, the pread copy of cached pages (4.5 GB at ~14 GB/s = 322 ms). Only K,
+  quantisation, hit rate and a zero-copy design move those numbers.
 - **36 GB vs 48 GB.** With 21 GB of cache the working set is 7 % of the experts. If the measured
   hit rate is far below 40 %, dense 4-bit (lever 2) is not optional.
 - **Numerics we cannot check without the reference run.** Sinkhorn `comb`, attention sink,

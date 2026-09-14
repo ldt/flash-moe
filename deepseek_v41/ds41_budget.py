@@ -43,6 +43,14 @@ def main():
                     help="experts as stored (MXFP4 = 4) or requantized to 2-bit (2, quality loss)")
     ap.add_argument("--ssd-gbps", type=float, default=8.0,
                     help="effective SSD throughput for ~18 MB random reads (GB/s, default 8)")
+    ap.add_argument("--cache-gbps", type=float, default=14.0,
+                    help="pread() throughput when the expert is already in the page cache (memcpy into the "
+                         "Metal buffer). Calibrated on the Qwen3.5 run: 28.3 MB in 2.41 ms at 71 %% hits "
+                         "with ~8 GB/s cold reads -> ~14 GB/s for the hot part (default 14)")
+    ap.add_argument("--zero-copy", action="store_true",
+                    help="model a resident-expert design: cached experts live in GPU-visible memory (mmap + "
+                         "newBufferWithBytesNoCopy or a pinned LRU) so a hit costs no pread copy. Only "
+                         "worth it when the cache covers a large share of the experts (64 GB+).")
     ap.add_argument("--hit-rate", type=float, default=None,
                     help="page-cache hit rate; default: scaled from the Qwen run by cache/expert ratio")
     ap.add_argument("--gpu-ms-per-layer", type=float, default=2.2,
@@ -137,18 +145,27 @@ def main():
     else:
         hit = args.hit_rate
     ssd_bytes = per_token * (1 - hit)
+    hot_bytes = per_token * hit
     io_ms = ssd_bytes / (args.ssd_gbps * 1e9) * 1e3
+    hot_ms = 0.0 if args.zero_copy else hot_bytes / (args.cache_gbps * 1e9) * 1e3
     compute_ms = L * args.gpu_ms_per_layer
     engram_ms = 2 * 1.0  # 2 layers x ~48 parallel 4K random reads; sub-ms each in practice
-    total_ms = io_ms + compute_ms + engram_ms
-    print(f"  assumed page-cache hit rate: {100 * hit:.0f} %  -> {fmt_bytes(ssd_bytes)} from SSD per token")
-    print(f"  SSD time     @ {args.ssd_gbps:g} GB/s : {io_ms:7.1f} ms")
+    total_ms = io_ms + hot_ms + compute_ms + engram_ms
+    print(f"  assumed page-cache hit rate: {100 * hit:.0f} %  -> {fmt_bytes(ssd_bytes)} from SSD, {fmt_bytes(hot_bytes)} from RAM per token")
+    print(f"  SSD reads    @ {args.ssd_gbps:g} GB/s : {io_ms:7.1f} ms")
+    if args.zero_copy:
+        print(f"  cached reads (zero-copy)   : {hot_ms:7.1f} ms  (GPU reads the resident expert in place)")
+    else:
+        print(f"  cached reads @ {args.cache_gbps:g} GB/s: {hot_ms:7.1f} ms  (pread copy from page cache into the Metal buffer)")
     print(f"  GPU/CPU time @ {args.gpu_ms_per_layer:g} ms/layer: {compute_ms:7.1f} ms  (serial with SSD on unified memory)")
     print(f"  Engram lookups             : {engram_ms:7.1f} ms")
     print(f"  ---------------------------------------")
     print(f"  ESTIMATE: {total_ms:.0f} ms/token  ->  {1000 / total_ms:.1f} tok/s")
     cold = per_token / (args.ssd_gbps * 1e9) * 1e3 + compute_ms + engram_ms
-    print(f"  cold cache (0 % hits):  {cold:.0f} ms/token -> {1000 / cold:.1f} tok/s")
+    warm = (0.0 if args.zero_copy else per_token / (args.cache_gbps * 1e9) * 1e3) + compute_ms + engram_ms
+    print(f"  cold cache (0 % hits):   {cold:.0f} ms/token -> {1000 / cold:.1f} tok/s")
+    print(f"  fully cached (100 % hits): {warm:.0f} ms/token -> {1000 / warm:.1f} tok/s  (ceiling of the pread design; "
+          f"zero-copy resident experts would remove the {warm - compute_ms - engram_ms:.0f} ms copy)")
 
     print()
     print("=" * 78)
